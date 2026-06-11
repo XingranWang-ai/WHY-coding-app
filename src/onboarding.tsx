@@ -2,140 +2,171 @@ import { useState } from 'react'
 
 export const ONBOARDING_DONE_KEY = 'why-onboarding-done-v1'
 
+type Step = 'gate' | 'home' | 'practice' | 'why' | 'sidebar' | 'leaderboard'
+
+const STEPS: Array<{
+  key: Step
+  title: string
+  body: string
+}> = [
+  {
+    key: 'gate',
+    title: '欢迎使用 Why',
+    body: '用一小段代码，学会一个清楚的知识点。',
+  },
+  {
+    key: 'home',
+    title: '选一种练习',
+    body: '选择学习模式和编程语言，然后开始一题。',
+  },
+  {
+    key: 'practice',
+    title: '看代码慢慢写出',
+    body: '答案会逐行出现。你可以调速度，也可以随时暂停。',
+  },
+  {
+    key: 'why',
+    title: '不懂就点 why',
+    body: '选中代码行查看解释，再点“深一层”继续理解。',
+  },
+  {
+    key: 'sidebar',
+    title: '需要时打开菜单',
+    body: '这里可以切换账号、回看教程、检查更新和调整设置。',
+  },
+  {
+    key: 'leaderboard',
+    title: '头像会出现在排行榜',
+    body: '昵称、头像和刷题数会一起展示，每个账号独立记录。',
+  },
+]
+
 function markOnboardingDone() {
   window.localStorage.setItem(ONBOARDING_DONE_KEY, '1')
 }
 
-type Step = 'gate' | 'home' | 'practice' | 'why' | 'sidebar' | 'leaderboard'
+function TutorialVisual({ step }: { step: Step }) {
+  if (step === 'gate') {
+    return (
+      <div className="tutorial-visual tutorial-welcome" aria-hidden="true">
+        <strong>?</strong>
+        <div><span /><span /><span /></div>
+      </div>
+    )
+  }
 
-const STEPS: { key: Step; label: string; emoji: string }[] = [
-  { key: 'gate', label: '欢迎', emoji: '?' },
-  { key: 'home', label: '选题', emoji: '1' },
-  { key: 'practice', label: '书写', emoji: '2' },
-  { key: 'why', label: '解释', emoji: '3' },
-  { key: 'sidebar', label: '菜单', emoji: '4' },
-  { key: 'leaderboard', label: '排行', emoji: '5' },
-]
+  if (step === 'home') {
+    return (
+      <div className="tutorial-visual tutorial-home" aria-hidden="true">
+        <div><span>学习模式</span><i /></div>
+        <div className="tutorial-chips"><span>Python</span><span>JavaScript</span></div>
+        <b>开始一题</b>
+      </div>
+    )
+  }
+
+  if (step === 'practice') {
+    return (
+      <div className="tutorial-visual tutorial-code" aria-hidden="true">
+        <span><i>1</i><code>for item in list:</code></span>
+        <span><i>2</i><code>print(item)</code></span>
+        <span className="typing-line"><i>3</i><code /></span>
+      </div>
+    )
+  }
+
+  if (step === 'why') {
+    return (
+      <div className="tutorial-visual tutorial-why" aria-hidden="true">
+        <code>print(item)</code>
+        <div><strong>why</strong><span>输出当前这一项</span></div>
+        <b>深一层</b>
+      </div>
+    )
+  }
+
+  if (step === 'sidebar') {
+    return (
+      <div className="tutorial-visual tutorial-menu" aria-hidden="true">
+        <span>切换账号 <i>›</i></span>
+        <span>新手教程 <i>›</i></span>
+        <span>检查更新 <i>›</i></span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="tutorial-visual tutorial-rank" aria-hidden="true">
+      <span className="rank-two">2</span>
+      <span className="rank-one">1</span>
+      <span className="rank-three">3</span>
+    </div>
+  )
+}
 
 type OnboardingGateProps = {
   onDone: () => void
 }
 
 export function OnboardingGate({ onDone }: OnboardingGateProps) {
-  const [step, setStep] = useState<Step>('gate')
+  const [stepIndex, setStepIndex] = useState(0)
+  const current = STEPS[stepIndex]
 
   const finish = () => {
     markOnboardingDone()
     onDone()
   }
 
-  const advance = (next: Step) => setStep(next)
-
-  if (step === 'gate') {
-    return (
-      <div className="onboard-overlay" role="dialog" aria-modal="true" aria-label="新手引导">
-        <div className="onboard-card">
-          <div className="onboard-graphic gate-graphic">
-            <span>?</span>
-          </div>
-          <div className="onboard-body">
-            <h2>欢迎使用 Why</h2>
-            <p>一款把代码练习变成随手一学的轻量应用。</p>
-          </div>
-          <div className="onboard-actions stack">
-            <button
-              className="onboard-primary"
-              type="button"
-              onClick={() => advance('home')}
-            >
-              我是新用户，带我了解
-            </button>
-            <button
-              className="onboard-ghost"
-              type="button"
-              onClick={finish}
-            >
-              我是老用户，直接开始
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const stepIndex = STEPS.findIndex((s) => s.key === step)
-
-  const content: Record<Step, { title: string; body: string }> = {
-    gate: { title: '', body: '' },
-    home: {
-      title: '选择题目',
-      body: '首页可选择「学习模式」或「精简模式」，再挑选 Python、JavaScript 或 Java，然后点「开始一题」进入练习。',
-    },
-    practice: {
-      title: '代码自动书写',
-      body: '题目给出后，答案代码会逐行自动书写。你可以调节慢、中、快三档速度，也可以随时暂停或继续。',
-    },
-    why: {
-      title: '逐行解释',
-      body: '点击任意已完成的代码行，按下「why」按钮，可获得三层渐进式解释——从一句话概述到深度原理，帮你真正理解代码。',
-    },
-    sidebar: {
-      title: '侧边栏',
-      body: '练习页左上角菜单可打开侧边栏，包含联网排行榜、问题反馈、打赏作者以及界面颜色设置。',
-    },
-    leaderboard: {
-      title: '联网排行榜',
-      body: '首页或侧边栏均可进入排行榜。前三名在顶部突出展示，按累计刷题数量排名。只需一个昵称即可加入。',
-    },
-  }
-
-  const current = content[step]
-
   return (
-    <div className="onboard-overlay" role="dialog" aria-modal="true" aria-label={current.title}>
+    <div className="onboard-overlay" role="dialog" aria-modal="true" aria-label="新手教程">
       <div className="onboard-card">
-        <div className={`onboard-graphic onboard-graphic-${step}`}>
-          <span>{STEPS[stepIndex].emoji}</span>
-        </div>
+        <TutorialVisual step={current.key} />
         <div className="onboard-body">
           <h2>{current.title}</h2>
           <p>{current.body}</p>
         </div>
-        <div className="onboard-dots">
-          {STEPS.slice(1).map((s) => (
-            <span
-              key={s.key}
-              className={s.key === step ? 'active' : ''}
-              aria-hidden="true"
-            />
-          ))}
-        </div>
-        <div className="onboard-actions">
-          <button
-            className="onboard-ghost"
-            type="button"
-            onClick={finish}
-          >
-            跳过
-          </button>
-          {stepIndex < STEPS.length - 1 ? (
+
+        {stepIndex === 0 ? (
+          <div className="onboard-actions stack">
             <button
               className="onboard-primary"
               type="button"
-              onClick={() => advance(STEPS[stepIndex + 1].key)}
+              onClick={() => setStepIndex(1)}
             >
-              下一步
+              开始了解
             </button>
-          ) : (
-            <button
-              className="onboard-primary"
-              type="button"
-              onClick={finish}
-            >
-              开始使用
+            <button className="onboard-ghost" type="button" onClick={finish}>
+              直接使用
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            <div className="onboard-dots" aria-label={`第 ${stepIndex} 步，共 ${STEPS.length - 1} 步`}>
+              {STEPS.slice(1).map((step, index) => (
+                <span
+                  key={step.key}
+                  className={index + 1 === stepIndex ? 'active' : ''}
+                  aria-hidden="true"
+                />
+              ))}
+            </div>
+            <div className="onboard-actions">
+              <button className="onboard-ghost" type="button" onClick={finish}>
+                退出教程
+              </button>
+              <button
+                className="onboard-primary"
+                type="button"
+                onClick={() => {
+                  if (stepIndex === STEPS.length - 1) finish()
+                  else setStepIndex((index) => index + 1)
+                }}
+              >
+                {stepIndex === STEPS.length - 1 ? '开始使用' : '下一步'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

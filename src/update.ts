@@ -1,5 +1,5 @@
-export const APP_VERSION = '1.5.0'
-export const APP_VERSION_CODE = 6
+export const APP_VERSION = '1.9.2'
+export const APP_VERSION_CODE = 13
 
 /*
   版本检查 JSONBlob 地址
@@ -24,29 +24,45 @@ export type UpdateInfo = {
   releaseNotes: string
 }
 
-function isUpdateInfo(value: unknown): value is UpdateInfo {
-  if (!value || typeof value !== 'object') return false
+function parseUpdateInfo(value: unknown): UpdateInfo | null {
+  if (!value || typeof value !== 'object') return null
   const info = value as Partial<UpdateInfo>
-  return (
-    typeof info.version === 'string' &&
-    typeof info.versionCode === 'number' &&
-    typeof info.apkUrl === 'string' &&
-    typeof info.releaseNotes === 'string'
-  )
+  if (
+    typeof info.version !== 'string' ||
+    typeof info.versionCode !== 'number' ||
+    typeof info.apkUrl !== 'string' ||
+    typeof info.releaseNotes !== 'string'
+  ) {
+    return null
+  }
+
+  const releaseNotes = info.releaseNotes.trim()
+  const hasBrokenText =
+    releaseNotes.includes('\uFFFD') || /^[?\s]+$/.test(releaseNotes)
+
+  return {
+    version: info.version,
+    versionCode: info.versionCode,
+    apkUrl: info.apkUrl,
+    releaseNotes: hasBrokenText ? '' : releaseNotes,
+  }
+}
+
+export async function fetchLatestVersion(): Promise<UpdateInfo> {
+  const response = await fetch(VERSION_CHECK_URL, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+  if (!response.ok) throw new Error(`版本检查失败：${response.status}`)
+  const info = parseUpdateInfo(await response.json())
+  if (!info) throw new Error('版本信息格式错误')
+  return info
 }
 
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
   try {
-    const response = await fetch(VERSION_CHECK_URL, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    })
-    if (!response.ok) return null
-    const data: unknown = await response.json()
-    if (isUpdateInfo(data) && data.versionCode > APP_VERSION_CODE) {
-      return data
-    }
-    return null
+    const info = await fetchLatestVersion()
+    return info.versionCode > APP_VERSION_CODE ? info : null
   } catch {
     return null
   }

@@ -18,25 +18,34 @@ import {
   challengesByLanguage,
   LANGUAGE_OPTIONS,
   TOTAL_CHALLENGES,
+  type Challenge,
   type Language,
+  type LineExplanation,
 } from './challenges'
+import { openExternalUrl } from './externalBrowser'
 import {
+  activateProfile,
   createProfile,
   fetchLeaderboard,
   incrementSolvedCount,
+  loadAccounts,
   loadCachedLeaderboard,
   loadProfile,
   loadSolvedCount,
   saveProfile,
   syncPlayer,
   type LeaderboardEntry,
+  type PlayerAccount,
   type PlayerProfile,
 } from './leaderboard'
 import {
   OnboardingGate,
 } from './onboarding'
 import {
+  APP_VERSION,
+  APP_VERSION_CODE,
   checkForUpdate,
+  fetchLatestVersion,
   getSkippedVersion,
   skipVersion,
   type UpdateInfo,
@@ -46,9 +55,10 @@ import './App.css'
 type Mode = 'learn' | 'focus'
 type Phase = 'reading' | 'typing' | 'complete'
 type Speed = 'slow' | 'normal' | 'fast'
-type DrawerPanel = 'feedback' | 'donate' | 'settings' | null
+type DrawerPanel = 'account' | 'feedback' | 'donate' | 'settings' | null
 type AppPage = 'home' | 'practice' | 'leaderboard'
 type SyncStatus = 'idle' | 'syncing' | 'online' | 'offline'
+type ManualUpdateStatus = 'idle' | 'checking' | 'latest' | 'error'
 
 type ThemeSettings = {
   background: string
@@ -78,6 +88,42 @@ const BACKGROUND_PRESETS = ['#f4efe5', '#10100f', '#111827', '#211813']
 const ACCENT_PRESETS = ['#316bc7', '#df6c36', '#dc4c4c', '#d6a534', '#e7e2d8']
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
 const MAX_AVATAR_DATA_LENGTH = 9000
+
+function compactExplanation(text: string, maxLength = 150) {
+  const firstSentence = text.match(/^.*?[。！？]/)?.[0] ?? text
+  return firstSentence.length <= maxLength
+    ? firstSentence
+    : `${firstSentence.slice(0, maxLength).trim()}…`
+}
+
+function getExplanationText(
+  mode: Mode,
+  level: number,
+  challenge: Challenge,
+  explanation: LineExplanation,
+) {
+  if (challenge.source === 'legacy') {
+    return level === 1
+      ? explanation.simple
+      : level === 2
+        ? explanation.detail
+        : explanation.deep
+  }
+
+  if (mode === 'focus') {
+    return level === 1
+      ? compactExplanation(explanation.detail, 90)
+      : level === 2
+        ? explanation.detail
+        : compactExplanation(explanation.deep, 220)
+  }
+
+  if (level === 1) return explanation.simple
+  if (level === 2) {
+    return `${explanation.simple}\n\n进一步理解\n${explanation.detail}`
+  }
+  return `${explanation.simple}\n\n进一步理解\n${explanation.detail}\n\n底层原理\n${explanation.deep}`
+}
 
 const syntaxPattern =
   /(\b(?:const|let|for|of|if|else|return|new|true|false|null|undefined|int|double|String|Map|HashMap|class|public|private|static|void|boolean|char|in|def|lambda|None|True|False|import|from|as|print)\b|f?['"][^'"]*['"]|\b\d+(?:\.\d+)?\b|\/\/.*$|#.*$)/g
@@ -296,7 +342,10 @@ function ModeSelect({
           className={selected === 'learn' ? 'mode-card selected' : 'mode-card'}
           onClick={() => setSelected('learn')}
         >
-          <strong>学习模式</strong>
+          <span className="mode-copy">
+            <strong>学习模式</strong>
+            <small>逐句讲透，适合从零学</small>
+          </span>
           <span className="radio" aria-hidden="true" />
         </button>
         <button
@@ -304,7 +353,10 @@ function ModeSelect({
           className={selected === 'focus' ? 'mode-card selected' : 'mode-card'}
           onClick={() => setSelected('focus')}
         >
-          <strong>精简模式</strong>
+          <span className="mode-copy">
+            <strong>精简模式</strong>
+            <small>保留重点，快速理解</small>
+          </span>
           <span className="radio" aria-hidden="true" />
         </button>
       </div>
@@ -324,6 +376,16 @@ function ModeSelect({
           ))}
         </div>
       </fieldset>
+
+      <button
+        className="leaderboard-button"
+        type="button"
+        onClick={onOpenLeaderboard}
+      >
+        <span aria-hidden="true">&#9733;</span>
+        联网排行榜
+        <small>{solved} 题</small>
+      </button>
 
       <button className="start-button" type="button" onClick={() => onStart(selected)}>
         开始一题
@@ -377,6 +439,7 @@ function ColorSetting({
 function NicknameGate({
   open,
   profile,
+  canClose,
   busy,
   error,
   onClose,
@@ -384,6 +447,7 @@ function NicknameGate({
 }: {
   open: boolean
   profile: PlayerProfile | null
+  canClose: boolean
   busy: boolean
   error: string
   onClose: () => void
@@ -404,13 +468,19 @@ function NicknameGate({
   }
 
   return (
-    <div className="profile-gate" role="dialog" aria-modal="true" aria-label="匿名注册">
+    <div className="profile-gate" role="dialog" aria-modal="true" aria-label="账号资料">
       <form className="profile-card" onSubmit={submitNickname}>
-        <span className="profile-kicker">ANONYMOUS</span>
-        <h2>{profile ? '修改昵称' : '给自己一个昵称'}</h2>
+        <span className="profile-kicker">WHY ACCOUNT</span>
+        <h2>{profile ? '编辑账号' : '添加账号'}</h2>
+        <p className="profile-intro">
+          建议上传头像。昵称、头像和刷题数会显示在联网排行榜中。
+        </p>
         <label className="avatar-upload">
           <Avatar profile={{ nickname: nickname || '?', avatar }} size="large" />
-          <span>{avatarBusy ? '处理中…' : avatar ? '更换头像' : '上传头像'}</span>
+          <span>
+            <strong>{avatarBusy ? '处理中…' : avatar ? '更换头像' : '上传头像'}</strong>
+            <small>让排行榜里的你更好认</small>
+          </span>
           <input
             type="file"
             accept="image/*"
@@ -454,9 +524,9 @@ function NicknameGate({
           type="submit"
           disabled={busy || avatarBusy || nickname.trim().length < 2}
         >
-          {busy ? '正在连接…' : profile ? '保存昵称' : '进入 Why'}
+          {busy ? '正在连接…' : profile ? '保存资料' : '使用这个账号'}
         </button>
-        {profile ? (
+        {canClose ? (
           <button className="profile-cancel" type="button" onClick={onClose}>
             取消
           </button>
@@ -582,20 +652,36 @@ function LeaderboardPage({
 function SideDrawer({
   open,
   panel,
+  profile,
+  accounts,
   language,
   settings,
+  updateStatus,
   onClose,
   onPanelChange,
+  onSwitchAccount,
+  onAddAccount,
+  onEditProfile,
+  onOpenTutorial,
+  onCheckUpdate,
   onOpenLeaderboard,
   onLanguageChange,
   onSettingsChange,
 }: {
   open: boolean
   panel: DrawerPanel
+  profile: PlayerProfile | null
+  accounts: PlayerAccount[]
   language: Language
   settings: ThemeSettings
+  updateStatus: ManualUpdateStatus
   onClose: () => void
   onPanelChange: (panel: DrawerPanel) => void
+  onSwitchAccount: (profileId: string) => void
+  onAddAccount: () => void
+  onEditProfile: () => void
+  onOpenTutorial: () => void
+  onCheckUpdate: () => void
   onOpenLeaderboard: () => void
   onLanguageChange: (language: Language) => void
   onSettingsChange: (settings: ThemeSettings) => void
@@ -627,10 +713,38 @@ function SideDrawer({
         <nav className="drawer-menu" aria-label="应用菜单">
           <button
             type="button"
+            className={panel === 'account' ? 'active' : ''}
+            onClick={() => onPanelChange(panel === 'account' ? null : 'account')}
+          >
+            <span>切换账号</span>
+            <span aria-hidden="true">›</span>
+          </button>
+          <button
+            type="button"
             onClick={onOpenLeaderboard}
           >
             <span>联网排行榜</span>
             <span aria-hidden="true">›</span>
+          </button>
+          <button type="button" onClick={onOpenTutorial}>
+            <span>新手教程</span>
+            <span aria-hidden="true">›</span>
+          </button>
+          <button
+            type="button"
+            disabled={updateStatus === 'checking'}
+            onClick={onCheckUpdate}
+          >
+            <span>检查更新</span>
+            <small>
+              {updateStatus === 'checking'
+                ? '检查中…'
+                : updateStatus === 'latest'
+                  ? '已是最新版'
+                  : updateStatus === 'error'
+                    ? '请稍后重试'
+                    : `v${APP_VERSION}`}
+            </small>
           </button>
           <button
             type="button"
@@ -659,6 +773,37 @@ function SideDrawer({
         </nav>
 
         <div className="drawer-panel">
+          {panel === 'account' ? (
+            <div className="account-panel">
+              <p>此设备上的账号</p>
+              <div className="account-list">
+                {accounts.map((account) => {
+                  const active = account.profile.id === profile?.id
+                  return (
+                    <button
+                      type="button"
+                      className={active ? 'active' : ''}
+                      key={account.profile.id}
+                      disabled={active}
+                      onClick={() => onSwitchAccount(account.profile.id)}
+                    >
+                      <Avatar profile={account.profile} size="small" />
+                      <span>
+                        <strong>{account.profile.nickname}</strong>
+                        <small>{account.solved} 题</small>
+                      </span>
+                      <i>{active ? '当前' : '切换'}</i>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="account-actions">
+                <button type="button" onClick={onAddAccount}>添加账号</button>
+                <button type="button" onClick={onEditProfile}>编辑当前资料</button>
+              </div>
+            </div>
+          ) : null}
+
           {panel === 'feedback' ? (
             <form className="feedback-form" onSubmit={saveFeedback}>
               <label htmlFor="feedback">反馈内容</label>
@@ -748,6 +893,7 @@ function App() {
   const [page, setPage] = useState<AppPage>('home')
   const [language, setLanguage] = useState<Language>('Python')
   const [profile, setProfile] = useState<PlayerProfile | null>(loadProfile)
+  const [accounts, setAccounts] = useState<PlayerAccount[]>(loadAccounts)
   const [solvedCount, setSolvedCount] = useState(loadSolvedCount)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(
     loadCachedLeaderboard,
@@ -755,6 +901,9 @@ function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle')
   const [leaderboardError, setLeaderboardError] = useState('')
   const [nicknameOpen, setNicknameOpen] = useState(() => !loadProfile())
+  const [editingProfile, setEditingProfile] = useState<PlayerProfile | null>(
+    loadProfile,
+  )
   const [nicknameBusy, setNicknameBusy] = useState(false)
   const [nicknameError, setNicknameError] = useState('')
   const [challengeIndex, setChallengeIndex] = useState(0)
@@ -774,6 +923,9 @@ function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateError, setUpdateError] = useState('')
+  const [manualUpdateStatus, setManualUpdateStatus] =
+    useState<ManualUpdateStatus>('idle')
   const timerRef = useRef<number | null>(null)
   const typingTimerRef = useRef<number | null>(null)
   const codeViewportRef = useRef<HTMLDivElement | null>(null)
@@ -843,29 +995,55 @@ function App() {
   )
 
   const submitNickname = useCallback(
-    async (nickname: string, avatar?: string) => {
+    (nickname: string, avatar?: string) => {
       setNicknameBusy(true)
       setNicknameError('')
-      const nextProfile = profile
-        ? { ...profile, nickname, avatar }
+      const nextProfile = editingProfile
+        ? { ...editingProfile, nickname, avatar }
         : { ...createProfile(nickname), avatar }
       saveProfile(nextProfile)
+      const nextSolved = loadSolvedCount(nextProfile.id)
       setProfile(nextProfile)
+      setAccounts(loadAccounts())
+      setSolvedCount(nextSolved)
       setNicknameOpen(false)
       setSyncStatus('syncing')
-      try {
-        const entries = await syncPlayer(nextProfile, solvedCount)
-        setLeaderboard(entries)
-        setSyncStatus('online')
-      } catch {
-        setSyncStatus('offline')
-        setLeaderboardError('昵称已保存在本机，联网后会自动加入排行榜。')
-      } finally {
-        setNicknameBusy(false)
-      }
+      setNicknameBusy(false)
     },
-    [profile, solvedCount],
+    [editingProfile],
   )
+
+  const switchAccount = useCallback(
+    (profileId: string) => {
+      const nextProfile = activateProfile(profileId)
+      if (!nextProfile) return
+      setProfile(nextProfile)
+      setAccounts(loadAccounts())
+      setSolvedCount(loadSolvedCount(nextProfile.id))
+      setLeaderboardError('')
+      setDrawerOpen(false)
+      setDrawerPanel(null)
+      setPage('home')
+      resetLesson(0)
+    },
+    [resetLesson],
+  )
+
+  const openNewAccount = useCallback(() => {
+    setEditingProfile(null)
+    setNicknameError('')
+    setDrawerOpen(false)
+    setDrawerPanel(null)
+    setNicknameOpen(true)
+  }, [])
+
+  const openProfileEditor = useCallback(() => {
+    setEditingProfile(profile)
+    setNicknameError('')
+    setDrawerOpen(false)
+    setDrawerPanel(null)
+    setNicknameOpen(true)
+  }, [profile])
 
   const showLeaderboard = useCallback(() => {
     leaderboardOriginRef.current = page === 'practice' ? 'practice' : 'home'
@@ -877,14 +1055,14 @@ function App() {
 
   useEffect(() => {
     if (!profile) return
-    void syncPlayer(profile, loadSolvedCount())
+    void syncPlayer(profile, loadSolvedCount(profile.id))
       .then((entries) => {
         setLeaderboard(entries)
         setLeaderboardError('')
         setSyncStatus('online')
       })
       .catch(() => {
-        setLeaderboardError('本题已记录在本机，联网后会继续同步。')
+        setLeaderboardError('账号资料和刷题数已保存在本机，联网后会继续同步。')
         setSyncStatus('offline')
       })
   }, [profile])
@@ -916,27 +1094,45 @@ function App() {
 
   const downloadUpdate = useCallback(async (info: UpdateInfo) => {
     setUpdateBusy(true)
+    setUpdateError('')
     try {
-      // open APK in system browser / download manager
-      window.open(info.apkUrl, '_system')
+      await openExternalUrl(info.apkUrl)
+      setUpdateInfo(null)
     } catch {
-      // fallback
-      window.open(info.apkUrl, '_blank')
+      setUpdateError('无法打开浏览器，请确认手机已安装并启用浏览器。')
     } finally {
       setUpdateBusy(false)
-      setUpdateInfo(null)
     }
   }, [])
 
   const dismissUpdate = useCallback((info: UpdateInfo) => {
     skipVersion(info.versionCode)
+    setUpdateError('')
     setUpdateInfo(null)
   }, [])
 
+  const checkUpdateManually = useCallback(async () => {
+    setManualUpdateStatus('checking')
+    try {
+      const info = await fetchLatestVersion()
+      if (info.versionCode > APP_VERSION_CODE) {
+        setManualUpdateStatus('idle')
+        setDrawerOpen(false)
+        setDrawerPanel(null)
+        setUpdateInfo(info)
+      } else {
+        setManualUpdateStatus('latest')
+      }
+    } catch {
+      setManualUpdateStatus('error')
+    }
+  }, [])
+
   const recordCompletion = useCallback(() => {
-    const nextSolved = incrementSolvedCount()
-    setSolvedCount(nextSolved)
     if (!profile) return
+    const nextSolved = incrementSolvedCount(profile.id)
+    setSolvedCount(nextSolved)
+    setAccounts(loadAccounts())
 
     setSyncStatus('syncing')
     void syncPlayer(profile, nextSolved)
@@ -1134,12 +1330,12 @@ function App() {
     setDrawerOpen(true)
   }
 
-  const explanationText =
-    explanationLevel === 1
-      ? currentExplanation.simple
-      : explanationLevel === 2
-        ? currentExplanation.detail
-        : currentExplanation.deep
+  const explanationText = getExplanationText(
+    mode ?? 'learn',
+    explanationLevel,
+    challenge,
+    currentExplanation,
+  )
 
   return (
     <div className="theme-root" style={themeStyle}>
@@ -1151,10 +1347,7 @@ function App() {
           syncStatus={syncStatus}
           error={leaderboardError}
           onRefresh={() => void refreshLeaderboard(true)}
-          onEditProfile={() => {
-            setNicknameError('')
-            setNicknameOpen(true)
-          }}
+          onEditProfile={openProfileEditor}
           onBack={() => setPage(leaderboardOriginRef.current)}
         />
       ) : page === 'home' ? (
@@ -1333,7 +1526,9 @@ function App() {
           {isExplaining ? (
             <section className="explanation open" aria-live="polite">
               <div className="explanation-head">
-                <span>第 {explanationLine + 1} 行</span>
+                <span>
+                  第 {explanationLine + 1} 行 · {mode === 'focus' ? '精简' : '详解'}
+                </span>
                 <span>{explanationLevel} / 3</span>
               </div>
               <p>{explanationText}</p>
@@ -1376,19 +1571,32 @@ function App() {
       <SideDrawer
         open={drawerOpen}
         panel={drawerPanel}
+        profile={profile}
+        accounts={accounts}
         language={language}
         settings={settings}
+        updateStatus={manualUpdateStatus}
         onClose={() => setDrawerOpen(false)}
         onPanelChange={setDrawerPanel}
+        onSwitchAccount={switchAccount}
+        onAddAccount={openNewAccount}
+        onEditProfile={openProfileEditor}
+        onOpenTutorial={() => {
+          setDrawerOpen(false)
+          setDrawerPanel(null)
+          setOnboardingOpen(true)
+        }}
+        onCheckUpdate={() => void checkUpdateManually()}
         onOpenLeaderboard={showLeaderboard}
         onLanguageChange={changeLanguage}
         onSettingsChange={updateSettings}
       />
 
       <NicknameGate
-        key={`${nicknameOpen}-${profile?.nickname ?? 'new'}`}
+        key={`${nicknameOpen}-${editingProfile?.id ?? 'new'}`}
         open={nicknameOpen}
-        profile={profile}
+        profile={editingProfile}
+        canClose={Boolean(profile)}
         busy={nicknameBusy}
         error={nicknameError}
         onClose={() => setNicknameOpen(false)}
@@ -1406,7 +1614,12 @@ function App() {
               发现新版本
               <span>v{updateInfo.version}</span>
             </h2>
-            <p className="update-notes">{updateInfo.releaseNotes}</p>
+            {updateInfo.releaseNotes ? (
+              <p className="update-notes">{updateInfo.releaseNotes}</p>
+            ) : null}
+            {updateError ? (
+              <p className="update-error" role="alert">{updateError}</p>
+            ) : null}
             <div className="update-buttons">
               <button
                 className="update-skip"

@@ -207,6 +207,17 @@ textarea {
   font-weight: 600;
 }
 
+.mode-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.mode-copy small {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .mode-card .radio {
   width: 16px;
   height: 16px;
@@ -262,12 +273,39 @@ textarea {
   background: var(--accent-soft);
 }
 
+.leaderboard-button {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  margin-bottom: 10px;
+  padding: 0 18px;
+  border: 1px solid var(--accent-border);
+  border-radius: 14px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.leaderboard-button span {
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.leaderboard-button small {
+  margin-left: auto;
+  color: var(--muted);
+  font: 10px/1 var(--mono);
+}
+
 .start-button {
   display: flex;
   min-height: 58px;
   align-items: center;
   justify-content: space-between;
-  margin-top: auto;
+  margin-top: 0;
   padding: 0 20px;
   border: 0;
   border-radius: 14px;
@@ -695,6 +733,7 @@ textarea {
   color: var(--text);
   font-size: 13px;
   line-height: 1.65;
+  white-space: pre-line;
 }
 
 .explanation aside {
@@ -860,8 +899,96 @@ textarea {
   font-size: 22px;
 }
 
+.drawer-menu > button > small {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.drawer-menu > button:disabled {
+  opacity: 0.65;
+}
+
 .drawer-panel {
   margin-top: 18px;
+}
+
+.account-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.account-panel > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-list {
+  display: grid;
+  gap: 8px;
+}
+
+.account-list > button {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+}
+
+.account-list > button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  opacity: 1;
+}
+
+.account-list > button > span {
+  display: grid;
+  gap: 4px;
+}
+
+.account-list strong {
+  font-size: 13px;
+}
+
+.account-list small,
+.account-list i {
+  color: var(--faint);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.account-list i {
+  color: var(--accent);
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.account-actions button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 11px;
+}
+
+.account-actions button:first-child {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 650;
 }
 
 .leaderboard-page {
@@ -1332,9 +1459,16 @@ textarea {
 }
 
 .profile-card h2 {
-  margin: 16px 0 20px;
+  margin: 16px 0 8px;
   font-size: 25px;
   letter-spacing: -0.04em;
+}
+
+.profile-intro {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .profile-card > label[for="nickname"] {
@@ -1372,6 +1506,21 @@ textarea {
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
+}
+
+.avatar-upload > span:last-of-type {
+  display: grid;
+  gap: 4px;
+}
+
+.avatar-upload strong {
+  font-size: 12px;
+}
+
+.avatar-upload small {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .avatar-upload input {
@@ -1524,23 +1673,222 @@ button:active:not(:disabled) {
   gap: 0;
 }
 
-.onboard-graphic {
-  display: grid;
-  width: 72px;
-  height: 72px;
-  place-items: center;
-  margin: 0 auto 18px;
-  border-radius: 50%;
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: 32px;
-  font-weight: 700;
+.tutorial-visual {
+  width: 100%;
+  height: 156px;
+  margin-bottom: 22px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  color: var(--text);
+  background: var(--bg);
 }
 
-.onboard-graphic.gate-graphic {
-  width: 88px;
-  height: 88px;
-  font: 700 42px/1 var(--mono);
+.tutorial-welcome {
+  display: grid;
+  place-items: center;
+}
+
+.tutorial-welcome > strong {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--button-text);
+  background: var(--accent);
+  font: 700 34px/1 var(--mono);
+}
+
+.tutorial-welcome > div {
+  display: flex;
+  gap: 6px;
+  margin-top: -22px;
+}
+
+.tutorial-welcome span {
+  width: 32px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.tutorial-home {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  padding: 20px;
+}
+
+.tutorial-home > div:first-child {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.tutorial-home > div:first-child i {
+  width: 10px;
+  height: 10px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+}
+
+.tutorial-chips {
+  display: flex;
+  gap: 7px;
+}
+
+.tutorial-chips span {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  font: 10px/1 var(--mono);
+  text-align: center;
+}
+
+.tutorial-home b {
+  padding: 10px;
+  border-radius: 9px;
+  color: var(--button-text);
+  background: var(--accent);
+  font-size: 11px;
+  text-align: center;
+}
+
+.tutorial-code {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 22px 16px;
+}
+
+.tutorial-code > span {
+  display: grid;
+  min-height: 28px;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.tutorial-code i {
+  color: var(--faint);
+  font: 9px/1 var(--mono);
+  text-align: center;
+}
+
+.tutorial-code code {
+  color: var(--text);
+  font: 10px/1.3 var(--mono);
+}
+
+.tutorial-code .typing-line code {
+  width: 2px;
+  height: 14px;
+  background: var(--accent);
+}
+
+.tutorial-why {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  padding: 18px;
+}
+
+.tutorial-why > code {
+  padding: 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  font: 10px/1.3 var(--mono);
+}
+
+.tutorial-why > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tutorial-why > div strong,
+.tutorial-why > b {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--button-text);
+  background: var(--accent);
+  font-size: 10px;
+}
+
+.tutorial-why > b {
+  justify-self: end;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tutorial-menu {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 18px 30px;
+}
+
+.tutorial-menu span {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 10px;
+}
+
+.tutorial-menu i {
+  color: var(--faint);
+  font-size: 16px;
+  font-style: normal;
+}
+
+.tutorial-rank {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  gap: 12px;
+  padding: 26px 24px 20px;
+}
+
+.tutorial-rank span {
+  display: grid;
+  width: 58px;
+  place-items: center;
+  border-radius: 28px 28px 10px 10px;
+  color: var(--button-text);
+  background: var(--accent);
+  font: 700 18px/1 var(--mono);
+}
+
+.tutorial-rank .rank-one {
+  height: 104px;
+}
+
+.tutorial-rank .rank-two {
+  height: 78px;
+  opacity: 0.72;
+}
+
+.tutorial-rank .rank-three {
+  height: 62px;
+  opacity: 0.5;
 }
 
 .onboard-body {
@@ -1619,22 +1967,22 @@ button:active:not(:disabled) {
   z-index: 90;
   inset: 0;
   display: grid;
-  place-items: end;
-  padding: 18px;
+  place-items: center;
+  padding: 24px;
   background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
 }
 
 .update-sheet {
   display: grid;
-  width: min(100%, 400px);
+  width: min(100%, 340px);
+  max-width: calc(100vw - 48px);
   gap: 16px;
   padding: 22px 20px 20px;
   border-radius: 20px;
   background: var(--surface);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.4);
-  transform: translateY(0);
-  animation: update-slide-up 280ms ease;
+  animation: update-pop-in 240ms ease;
 }
 
 .update-sheet h2 {
@@ -1655,6 +2003,13 @@ button:active:not(:disabled) {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.65;
+}
+
+.update-error {
+  margin: 10px 0 0;
+  color: #b84f4f;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .update-buttons {
@@ -1689,14 +2044,14 @@ button:active:not(:disabled) {
   text-align: center;
 }
 
-@keyframes update-slide-up {
+@keyframes update-pop-in {
   from {
     opacity: 0;
-    transform: translateY(40px);
+    transform: scale(0.92);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: scale(1);
   }
 }
 

@@ -7,7 +7,7 @@ $androidSdk = Join-Path $toolchain 'android-sdk'
 $gradle = Join-Path $toolchain 'gradle-8.14.3\bin\gradle.bat'
 $androidProject = Join-Path $projectRoot 'android'
 $builtApk = Join-Path $androidProject 'app\build\outputs\apk\debug\app-debug.apk'
-$outputApk = Join-Path $projectRoot 'Why-v1.5-debug.apk'
+$outputApk = Join-Path $projectRoot 'Why-v1.9.2-debug.apk'
 
 foreach ($requiredPath in @(
     (Join-Path $javaHome 'bin\java.exe'),
@@ -22,7 +22,7 @@ foreach ($requiredPath in @(
 $env:JAVA_HOME = $javaHome
 $env:ANDROID_HOME = $androidSdk
 $env:ANDROID_SDK_ROOT = $androidSdk
-$env:GRADLE_USER_HOME = Join-Path $toolchain 'gradle-home'
+$env:GRADLE_USER_HOME = Join-Path $env:USERPROFILE '.gradle-why'
 
 Push-Location $projectRoot
 try {
