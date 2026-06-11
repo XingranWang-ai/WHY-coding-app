@@ -1,0 +1,7 @@
+node_modules
+dist
+.toolchain
+*.apk
+*.log
+.DS_Store
+Thumbs.db
