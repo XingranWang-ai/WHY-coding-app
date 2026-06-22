@@ -1,0 +1,10 @@
+node_modules/
+.toolchain/
+.vite/
+dist/
+.env
+.env.*
+*.log
+Why-v*-debug.apk
+android/.gradle/
+android/app/build/

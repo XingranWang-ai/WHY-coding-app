@@ -7,7 +7,7 @@ $androidSdk = Join-Path $toolchain 'android-sdk'
 $gradle = Join-Path $toolchain 'gradle-8.14.3\bin\gradle.bat'
 $androidProject = Join-Path $projectRoot 'android'
 $builtApk = Join-Path $androidProject 'app\build\outputs\apk\debug\app-debug.apk'
-$outputApk = Join-Path $projectRoot 'Why-v1.9.2-debug.apk'
+$outputApk = Join-Path $projectRoot 'Why-v2.1.0-debug.apk'
 
 foreach ($requiredPath in @(
     (Join-Path $javaHome 'bin\java.exe'),

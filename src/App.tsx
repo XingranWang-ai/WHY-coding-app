@@ -55,7 +55,13 @@ import './App.css'
 type Mode = 'learn' | 'focus'
 type Phase = 'reading' | 'typing' | 'complete'
 type Speed = 'slow' | 'normal' | 'fast'
-type DrawerPanel = 'account' | 'feedback' | 'donate' | 'settings' | null
+type DrawerPanel =
+  | 'account'
+  | 'contact'
+  | 'feedback'
+  | 'donate'
+  | 'settings'
+  | null
 type AppPage = 'home' | 'practice' | 'leaderboard'
 type SyncStatus = 'idle' | 'syncing' | 'online' | 'offline'
 type ManualUpdateStatus = 'idle' | 'checking' | 'latest' | 'error'
@@ -298,6 +304,8 @@ function ModeSelect({
   solved,
   syncStatus,
   onLanguageChange,
+  onOpenMenu,
+  onEditProfile,
   onOpenLeaderboard,
   onStart,
 }: {
@@ -306,6 +314,8 @@ function ModeSelect({
   solved: number
   syncStatus: SyncStatus
   onLanguageChange: (language: Language) => void
+  onOpenMenu: () => void
+  onEditProfile: () => void
   onOpenLeaderboard: () => void
   onStart: (mode: Mode) => void
 }) {
@@ -314,13 +324,19 @@ function ModeSelect({
   return (
     <main className="welcome">
       <div className="welcome-top">
-        <div className="welcome-mark" aria-hidden="true">
+        <button
+          className="welcome-mark"
+          type="button"
+          aria-label="打开菜单"
+          onClick={onOpenMenu}
+        >
           ?
-        </div>
+        </button>
         <button
           className="welcome-rank"
           type="button"
-          onClick={onOpenLeaderboard}
+          aria-label="编辑个人资料"
+          onClick={onEditProfile}
         >
           <span className="welcome-avatar">
             <Avatar profile={profile} size="small" />
@@ -342,10 +358,7 @@ function ModeSelect({
           className={selected === 'learn' ? 'mode-card selected' : 'mode-card'}
           onClick={() => setSelected('learn')}
         >
-          <span className="mode-copy">
-            <strong>学习模式</strong>
-            <small>逐句讲透，适合从零学</small>
-          </span>
+          <strong>学习模式</strong>
           <span className="radio" aria-hidden="true" />
         </button>
         <button
@@ -353,10 +366,7 @@ function ModeSelect({
           className={selected === 'focus' ? 'mode-card selected' : 'mode-card'}
           onClick={() => setSelected('focus')}
         >
-          <span className="mode-copy">
-            <strong>精简模式</strong>
-            <small>保留重点，快速理解</small>
-          </span>
+          <strong>精简模式</strong>
           <span className="radio" aria-hidden="true" />
         </button>
       </div>
@@ -664,6 +674,7 @@ function SideDrawer({
   onEditProfile,
   onOpenTutorial,
   onCheckUpdate,
+  onGoHome,
   onOpenLeaderboard,
   onLanguageChange,
   onSettingsChange,
@@ -682,6 +693,7 @@ function SideDrawer({
   onEditProfile: () => void
   onOpenTutorial: () => void
   onCheckUpdate: () => void
+  onGoHome: () => void
   onOpenLeaderboard: () => void
   onLanguageChange: (language: Language) => void
   onSettingsChange: (settings: ThemeSettings) => void
@@ -711,6 +723,10 @@ function SideDrawer({
         </div>
 
         <nav className="drawer-menu" aria-label="应用菜单">
+          <button type="button" onClick={onGoHome}>
+            <span>返回首页</span>
+            <span aria-hidden="true">›</span>
+          </button>
           <button
             type="button"
             className={panel === 'account' ? 'active' : ''}
@@ -752,6 +768,14 @@ function SideDrawer({
             onClick={() => onPanelChange(panel === 'feedback' ? null : 'feedback')}
           >
             <span>问题反馈</span>
+            <span aria-hidden="true">›</span>
+          </button>
+          <button
+            type="button"
+            className={panel === 'contact' ? 'active' : ''}
+            onClick={() => onPanelChange(panel === 'contact' ? null : 'contact')}
+          >
+            <span>联系作者</span>
             <span aria-hidden="true">›</span>
           </button>
           <button
@@ -821,6 +845,28 @@ function SideDrawer({
                 {feedbackSaved ? '已保存' : '保存在本机'}
               </button>
             </form>
+          ) : null}
+
+          {panel === 'contact' ? (
+            <div className="contact-panel">
+              <div>
+                <span>作者 QQ</span>
+                <strong>2689414213</strong>
+              </div>
+              <p>如有任何问题欢迎联系。</p>
+              <code>https://github.com/XingranWang-ai/WHY-coding-app</code>
+              <button
+                type="button"
+                onClick={() =>
+                  void openExternalUrl(
+                    'https://github.com/XingranWang-ai/WHY-coding-app',
+                  )
+                }
+              >
+                打开 GitHub 仓库
+              </button>
+              <small>如果无法更新，请前往仓库手动下载最新版。</small>
+            </div>
           ) : null}
 
           {panel === 'donate' ? (
@@ -1053,18 +1099,49 @@ function App() {
     void refreshLeaderboard(true)
   }, [page, refreshLeaderboard])
 
+  const goHome = useCallback(() => {
+    setDrawerOpen(false)
+    setDrawerPanel(null)
+    setPage('home')
+  }, [])
+
   useEffect(() => {
     if (!profile) return
-    void syncPlayer(profile, loadSolvedCount(profile.id))
-      .then((entries) => {
+    let active = true
+    let inFlight = false
+
+    const syncStoredProgress = async () => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const entries = await syncPlayer(profile, loadSolvedCount(profile.id))
+        if (!active) return
         setLeaderboard(entries)
         setLeaderboardError('')
         setSyncStatus('online')
-      })
-      .catch(() => {
+      } catch {
+        if (!active) return
         setLeaderboardError('账号资料和刷题数已保存在本机，联网后会继续同步。')
         setSyncStatus('offline')
-      })
+      } finally {
+        inFlight = false
+      }
+    }
+
+    const syncWhenVisible = () => {
+      if (document.visibilityState === 'visible') void syncStoredProgress()
+    }
+    const syncInterval = window.setInterval(() => void syncStoredProgress(), 60_000)
+    window.addEventListener('online', syncStoredProgress)
+    document.addEventListener('visibilitychange', syncWhenVisible)
+    void syncStoredProgress()
+
+    return () => {
+      active = false
+      window.clearInterval(syncInterval)
+      window.removeEventListener('online', syncStoredProgress)
+      document.removeEventListener('visibilitychange', syncWhenVisible)
+    }
   }, [profile])
 
   // onboarding: show after profile is set (or first launch without profile gate)
@@ -1357,6 +1434,8 @@ function App() {
           solved={solvedCount}
           syncStatus={syncStatus}
           onLanguageChange={changeLanguage}
+          onOpenMenu={openDrawer}
+          onEditProfile={openProfileEditor}
           onOpenLeaderboard={showLeaderboard}
           onStart={(selectedMode) => {
             resetLesson(0)
@@ -1587,6 +1666,7 @@ function App() {
           setOnboardingOpen(true)
         }}
         onCheckUpdate={() => void checkUpdateManually()}
+        onGoHome={goHome}
         onOpenLeaderboard={showLeaderboard}
         onLanguageChange={changeLanguage}
         onSettingsChange={updateSettings}

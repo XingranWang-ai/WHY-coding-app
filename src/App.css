@@ -55,6 +55,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 50%;
   color: var(--accent);
+  background: transparent;
   font: 600 24px/1 var(--mono);
 }
 
@@ -188,7 +189,7 @@ textarea {
 
 .mode-card {
   display: flex;
-  min-height: 68px;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
   padding: 0 18px;
@@ -205,17 +206,6 @@ textarea {
 .mode-card strong {
   font-size: 16px;
   font-weight: 600;
-}
-
-.mode-copy {
-  display: grid;
-  gap: 5px;
-}
-
-.mode-copy small {
-  color: var(--faint);
-  font-size: 10px;
-  font-weight: 500;
 }
 
 .mode-card .radio {
@@ -1305,6 +1295,65 @@ textarea {
   border-color: var(--line);
   color: var(--faint);
   background: var(--surface);
+}
+
+.contact-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.contact-panel > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.contact-panel span,
+.contact-panel p,
+.contact-panel small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.contact-panel strong {
+  color: var(--text);
+  font: 600 13px/1 var(--mono);
+}
+
+.contact-panel code {
+  padding: 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--surface-2);
+  font: 10px/1.55 var(--mono);
+  user-select: text;
+}
+
+.contact-panel button {
+  min-height: 44px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--accent-border);
+  border-radius: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-panel small {
+  color: var(--faint);
 }
 
 .donate-panel {

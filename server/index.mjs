@@ -1,0 +1,382 @@
+import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
+
+const FILE_NAME = 'leaderboard.json'
+const MAX_PLAYERS = 100
+const MAX_AVATAR_LENGTH = 9_000
+const MAX_BODY_BYTES = 32_000
+const AVATAR_PATTERN = /^data:image\/(?:jpeg|png|webp);base64,/i
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://localhost',
+  'http://localhost',
+  'capacitor://localhost',
+]
+
+function emptyDocument(now = new Date().toISOString()) {
+  return { version: 1, players: [], updatedAt: now }
+}
+
+function isAvatar(value) {
+  return value === undefined || (
+    typeof value === 'string' &&
+    value.length <= MAX_AVATAR_LENGTH &&
+    AVATAR_PATTERN.test(value)
+  )
+}
+
+function cleanPlayer(value) {
+  if (!value || typeof value !== 'object') return null
+  if (
+    typeof value.id !== 'string' ||
+    value.id.length < 8 ||
+    value.id.length > 80 ||
+    typeof value.nickname !== 'string' ||
+    value.nickname.trim().length < 1 ||
+    value.nickname.trim().length > 30 ||
+    !isAvatar(value.avatar) ||
+    !Number.isSafeInteger(value.solved) ||
+    value.solved < 0 ||
+    value.solved > 10_000_000 ||
+    typeof value.updatedAt !== 'string'
+  ) {
+    return null
+  }
+  return {
+    id: value.id,
+    nickname: value.nickname.trim(),
+    ...(value.avatar ? { avatar: value.avatar } : {}),
+    solved: value.solved,
+    updatedAt: value.updatedAt,
+  }
+}
+
+export function normalizeDocument(value, now = new Date().toISOString()) {
+  const players = Array.isArray(value?.players)
+    ? value.players.map(cleanPlayer).filter(Boolean).slice(-MAX_PLAYERS)
+    : []
+  return {
+    version: 1,
+    players,
+    updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : now,
+  }
+}
+
+export function validateSyncPayload(value) {
+  if (!value || typeof value !== 'object' || !value.profile) return null
+  const solved = value.solved
+  const profile = value.profile
+  if (
+    typeof profile.id !== 'string' ||
+    profile.id.length < 8 ||
+    profile.id.length > 80 ||
+    typeof profile.nickname !== 'string' ||
+    profile.nickname.trim().length < 1 ||
+    profile.nickname.trim().length > 30 ||
+    !isAvatar(profile.avatar) ||
+    !Number.isSafeInteger(solved) ||
+    solved < 0 ||
+    solved > 10_000_000
+  ) {
+    return null
+  }
+  return {
+    profile: {
+      id: profile.id,
+      nickname: profile.nickname.trim(),
+      ...(profile.avatar ? { avatar: profile.avatar } : {}),
+    },
+    solved,
+  }
+}
+
+export function mergePlayer(documentValue, payload, now = new Date().toISOString()) {
+  const document = normalizeDocument(documentValue, now)
+  const existingIndex = document.players.findIndex(
+    (player) => player.id === payload.profile.id,
+  )
+  const nextPlayer = {
+    ...payload.profile,
+    solved: Math.max(payload.solved, document.players[existingIndex]?.solved ?? 0),
+    updatedAt: now,
+  }
+  const players = [...document.players]
+  if (existingIndex >= 0) players[existingIndex] = nextPlayer
+  else players.push(nextPlayer)
+  return { version: 1, players: players.slice(-MAX_PLAYERS), updatedAt: now }
+}
+
+export function needsPlayerUpdate(documentValue, payload) {
+  const document = normalizeDocument(documentValue)
+  const existing = document.players.find((player) => player.id === payload.profile.id)
+  if (!existing) return true
+  return (
+    existing.nickname !== payload.profile.nickname ||
+    (existing.avatar ?? '') !== (payload.profile.avatar ?? '') ||
+    existing.solved < payload.solved
+  )
+}
+
+async function fetchWithRetry(url, init, attempts = 3) {
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8_000)
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal })
+      if (response.status < 500 && response.status !== 429) return response
+      lastError = new Error(`GitHub request failed: ${response.status}`)
+    } catch (error) {
+      lastError = error
+    } finally {
+      clearTimeout(timeout)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)))
+  }
+  throw lastError ?? new Error('GitHub request failed')
+}
+
+export class GitHubGistStore {
+  constructor({ token, gistId }) {
+    if (!token || !gistId) throw new Error('GITHUB_TOKEN and LEADERBOARD_GIST_ID are required')
+    this.token = token
+    this.gistId = gistId
+    this.cache = null
+    this.writeQueue = Promise.resolve()
+  }
+
+  headers(extra = {}) {
+    return {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${this.token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'why-sync-api',
+      ...extra,
+    }
+  }
+
+  async read({ fresh = false } = {}) {
+    if (!fresh && this.cache && Date.now() - this.cache.savedAt < 15_000) {
+      return this.cache.document
+    }
+    const response = await fetchWithRetry(
+      `https://api.github.com/gists/${this.gistId}`,
+      { headers: this.headers() },
+    )
+    if (!response.ok) throw new Error(`Unable to read leaderboard store: ${response.status}`)
+    const gist = await response.json()
+    const file = gist.files?.[FILE_NAME]
+    if (!file) throw new Error(`Gist is missing ${FILE_NAME}`)
+    let content = file.content
+    if (file.truncated && file.raw_url) {
+      const raw = await fetchWithRetry(file.raw_url, { headers: this.headers() })
+      if (!raw.ok) throw new Error(`Unable to read complete leaderboard: ${raw.status}`)
+      content = await raw.text()
+    }
+    const document = normalizeDocument(JSON.parse(content))
+    this.cache = {
+      document,
+      savedAt: Date.now(),
+    }
+    return document
+  }
+
+  async syncPlayer(payload, now) {
+    const operation = async () => {
+      const current = await this.read()
+      if (!needsPlayerUpdate(current, payload)) return current
+      const next = mergePlayer(current, payload, now())
+      const response = await fetchWithRetry(
+        `https://api.github.com/gists/${this.gistId}`,
+        {
+          method: 'PATCH',
+          headers: this.headers({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            files: { [FILE_NAME]: { content: JSON.stringify(next) } },
+          }),
+        },
+      )
+      if (!response.ok) throw new Error(`Unable to update leaderboard store: ${response.status}`)
+      const updatedGist = await response.json()
+      const persistedContent = updatedGist.files?.[FILE_NAME]?.content
+      if (typeof persistedContent !== 'string') {
+        throw new Error('GitHub did not confirm the leaderboard update')
+      }
+      const persisted = normalizeDocument(JSON.parse(persistedContent))
+      const savedPlayer = persisted.players.find(
+        (player) => player.id === payload.profile.id,
+      )
+      if (!savedPlayer || savedPlayer.solved < payload.solved) {
+        throw new Error('GitHub returned stale leaderboard data after update')
+      }
+      this.cache = { document: persisted, savedAt: Date.now() }
+      return persisted
+    }
+    const result = this.writeQueue.then(operation, operation)
+    this.writeQueue = result.catch(() => undefined)
+    return result
+  }
+}
+
+function sendJson(response, status, value, extraHeaders = {}) {
+  const body = JSON.stringify(value)
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
+  })
+  response.end(body)
+}
+
+async function readJsonBody(request) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of request) {
+    size += chunk.length
+    if (size > MAX_BODY_BYTES) {
+      const error = new Error('Request body is too large')
+      error.status = 413
+      throw error
+    }
+    chunks.push(chunk)
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    const error = new Error('Request body must be valid JSON')
+    error.status = 400
+    throw error
+  }
+}
+
+function createRateLimiter(limit = 120, windowMs = 60_000) {
+  const clients = new Map()
+  return (key) => {
+    const now = Date.now()
+    const current = clients.get(key)
+    if (!current || current.resetAt <= now) {
+      clients.set(key, { count: 1, resetAt: now + windowMs })
+      return true
+    }
+    current.count += 1
+    return current.count <= limit
+  }
+}
+
+function requestId(request) {
+  return createHash('sha256')
+    .update(String(request.headers['x-forwarded-for'] ?? request.socket.remoteAddress ?? 'unknown'))
+    .digest('hex')
+    .slice(0, 16)
+}
+
+export function createHandler({
+  store,
+  now = () => new Date().toISOString(),
+  allowedOrigins = DEFAULT_ALLOWED_ORIGINS,
+  versionInfo,
+  rateLimit = 120,
+}) {
+  const allowRequest = createRateLimiter(rateLimit)
+  const originSet = new Set(allowedOrigins)
+
+  return async (request, response) => {
+    const origin = request.headers.origin
+    const corsHeaders = {
+      Vary: 'Origin',
+      ...(origin && originSet.has(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
+    }
+    if (origin && !originSet.has(origin)) {
+      sendJson(response, 403, { error: 'Origin is not allowed' }, corsHeaders)
+      return
+    }
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204, {
+        ...corsHeaders,
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      })
+      response.end()
+      return
+    }
+
+    const url = new URL(request.url ?? '/', 'http://localhost')
+    if (request.method === 'GET' && url.pathname === '/health') {
+      sendJson(response, 200, { status: 'ok' }, corsHeaders)
+      return
+    }
+    if (!allowRequest(requestId(request))) {
+      sendJson(response, 429, { error: 'Too many requests' }, {
+        ...corsHeaders,
+        'Retry-After': '60',
+      })
+      return
+    }
+
+    try {
+      if (request.method === 'GET' && url.pathname === '/api/leaderboard') {
+        sendJson(response, 200, await store.read(), corsHeaders)
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/api/players/sync') {
+        const payload = validateSyncPayload(await readJsonBody(request))
+        if (!payload) {
+          sendJson(response, 400, { error: 'Invalid player payload' }, corsHeaders)
+          return
+        }
+        sendJson(response, 200, await store.syncPlayer(payload, now), corsHeaders)
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/api/version') {
+        sendJson(response, 200, versionInfo, corsHeaders)
+        return
+      }
+      sendJson(response, 404, { error: 'Not found' }, corsHeaders)
+    } catch (error) {
+      const status = Number.isInteger(error?.status) ? error.status : 503
+      console.error(JSON.stringify({
+        level: 'error',
+        requestId: requestId(request),
+        path: url.pathname,
+        message: error instanceof Error ? error.message : 'Unknown error',
+      }))
+      sendJson(response, status, {
+        error: status >= 500 ? 'Sync service is temporarily unavailable' : error.message,
+      }, corsHeaders)
+    }
+  }
+}
+
+function versionInfoFromEnvironment() {
+  return {
+    version: process.env.APP_VERSION ?? '2.1.0',
+    versionCode: Number.parseInt(process.env.APP_VERSION_CODE ?? '15', 10),
+    apkUrl: process.env.APP_APK_URL ??
+      'https://github.com/XingranWang-ai/WHY-coding-app/releases/download/v2.1.0/Why-v2.1.0-debug.apk',
+    releaseNotes: process.env.APP_RELEASE_NOTES ??
+      '修复联网同步故障，并增加自动重试、离线补传和动态容灾配置。',
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const store = new GitHubGistStore({
+    token: process.env.GITHUB_TOKEN,
+    gistId: process.env.LEADERBOARD_GIST_ID,
+  })
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS.join(','))
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const server = createServer(createHandler({
+    store,
+    allowedOrigins,
+    versionInfo: versionInfoFromEnvironment(),
+  }))
+  const port = Number.parseInt(process.env.PORT ?? '8787', 10)
+  server.listen(port, '0.0.0.0', () => {
+    console.log(JSON.stringify({ level: 'info', message: 'why-sync-api started', port }))
+  })
+}

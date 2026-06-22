@@ -1,13 +1,15 @@
 {
   "name": "why-app",
   "private": true,
-  "version": "1.9.2",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "server:start": "node server/index.mjs",
+    "test:server": "node --test server/*.test.mjs",
     "android:add": "cap add android",
     "android:sync": "npm run build && cap sync android",
     "android:open": "cap open android",
@@ -33,5 +35,8 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "apiBases": [
+    "https://why-sync-api-xingran.onrender.com"
+  ],
+  "latestVersion": {
+    "version": "2.1.0",
+    "versionCode": 15,
+    "apkUrl": "https://github.com/XingranWang-ai/WHY-coding-app/releases/download/v2.1.0/Why-v2.1.0-debug.apk",
+    "releaseNotes": "修复全员突然离线和答题记录无法上传；迁移到持久同步服务；新增超时重试、自动补传和动态容灾配置。"
+  }
+}

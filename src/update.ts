@@ -1,21 +1,7 @@
-export const APP_VERSION = '1.9.2'
-export const APP_VERSION_CODE = 13
+import { getNetworkConfig, requestApiJson } from './network'
 
-/*
-  版本检查 JSONBlob 地址
-  替换为你的 JSONBlob ID，格式如下：
-  {
-    "version": "1.5.0",
-    "versionCode": 6,
-    "apkUrl": "https://your-server.com/Why-v1.5-debug.apk",
-    "releaseNotes": "更新内容说明"
-  }
-*/
-const VERSION_BLOB_ID = '019eb649-ab99-72ca-bf7c-6381c3d8f66b'
-export const VERSION_CHECK_URL =
-  import.meta.env.DEV
-    ? '/version-api'
-    : `https://jsonblob.com/api/jsonBlob/${VERSION_BLOB_ID}`
+export const APP_VERSION = '2.1.0'
+export const APP_VERSION_CODE = 15
 
 export type UpdateInfo = {
   version: string
@@ -49,12 +35,10 @@ function parseUpdateInfo(value: unknown): UpdateInfo | null {
 }
 
 export async function fetchLatestVersion(): Promise<UpdateInfo> {
-  const response = await fetch(VERSION_CHECK_URL, {
-    cache: 'no-store',
-    headers: { Accept: 'application/json' },
-  })
-  if (!response.ok) throw new Error(`版本检查失败：${response.status}`)
-  const info = parseUpdateInfo(await response.json())
+  const config = await getNetworkConfig()
+  const remoteValue =
+    config?.latestVersion ?? await requestApiJson<unknown>('/api/version')
+  const info = parseUpdateInfo(remoteValue)
   if (!info) throw new Error('版本信息格式错误')
   return info
 }

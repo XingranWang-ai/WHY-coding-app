@@ -4,12 +4,20 @@ Why 是一个轻量代码学习 App。用户先阅读题目，再观看答案慢
 
 ## 最新版本
 
-Android 交付版：**v2.0.0**
+Android 交付版：**v2.1.0**
 
-- [下载 Why v2.0.0 APK](https://github.com/XingranWang-ai/WHY-coding-app/releases/download/v2.0.0/Why-v2.0.0-debug.apk)
+- [下载 Why v2.1.0 APK](https://github.com/XingranWang-ai/WHY-coding-app/releases/download/v2.1.0/Why-v2.1.0-debug.apk)
 - [查看完整安装说明](docs/v2.0.0/安装说明.md)
 - Android 7.0 及以上
-- SHA-256：`A5336ACC9FDF0C2D9C7DDD0BF5E1E4E9B7B86AC10B6A2D1D75F617A931B31F7D`
+- SHA-256：`6D6895262A4BE64D03563C8FFB8BE96546B6D8E065AFEF1943F5D0D0DDFD6A6F`
+
+### v2.1.0 更新
+
+- 修复 JSONBlob 自动过期造成的全员离线和答题记录无法上传
+- 排行榜迁移到自有同步 API 与私有持久存储
+- 新增请求超时、指数退避、网络恢复自动补传和前台补传
+- 新增动态 API 配置，后续故障切换无需再次更换 APK
+- 本机答题记录继续作为事实源，上传失败不会丢失
 
 ### v2.0.0 更新
 
@@ -37,8 +45,12 @@ Android 交付版：**v2.0.0**
 - 联网排行榜按累计刷题数量排名
 - 排行榜使用独立页面，前三名在顶端突出展示
 - 断网时题量保存在本机，恢复联网后继续同步
+- 同步请求带超时、退避重试、前台恢复和定时补传
+- 排行榜通过自有 API 写入私有持久存储，不再依赖会过期的匿名 JSONBlob
+- API 地址由 GitHub 动态配置，后续迁移服务无需再次更换 APK
 - 大尺寸横向滑轨可移动代码显示范围
-- 侧边栏包含问题反馈、打赏作者和设置
+- 侧边栏包含联系作者、问题反馈、打赏作者和设置
+- 首页左上角可打开侧边栏，右上角可编辑个人资料
 - 支持自定义界面颜色与按钮颜色
 - 默认米白页面与蓝色按钮，设置中保留黑橙配色
 - Capacitor Android 原生壳
@@ -66,4 +78,10 @@ npm.cmd run dev
 npm.cmd run android:build
 ```
 
-源码构建产物位于项目根目录。当前 v2.0.0 Android 交付包请从 GitHub Releases 下载。
+最终 APK 位于项目根目录：`Why-v2.1.0-debug.apk`。
+
+## 同步服务
+
+后端入口为 `server/index.mjs`，本地启动前需设置 `GITHUB_TOKEN` 和
+`LEADERBOARD_GIST_ID`。Render 部署配置见 `render.yaml`，完整上线步骤见
+`docs/NETWORK_RECOVERY.md`。

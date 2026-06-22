@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: why-sync-api-xingran
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    autoDeployTrigger: commit
+    buildCommand: npm ci
+    startCommand: npm run server:start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: LEADERBOARD_GIST_ID
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://localhost,http://localhost,capacitor://localhost
