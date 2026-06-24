@@ -101,6 +101,45 @@ export function validateSyncPayload(value) {
   }
 }
 
+export function validateAdminPlayerPatch(value) {
+  if (!value || typeof value !== 'object') return null
+  const patch = {}
+
+  if ('nickname' in value) {
+    if (
+      typeof value.nickname !== 'string' ||
+      value.nickname.trim().length < 1 ||
+      value.nickname.trim().length > 30
+    ) {
+      return null
+    }
+    patch.nickname = value.nickname.trim()
+  }
+
+  if ('solved' in value) {
+    if (
+      !Number.isSafeInteger(value.solved) ||
+      value.solved < 0 ||
+      value.solved > 10_000_000
+    ) {
+      return null
+    }
+    patch.solved = value.solved
+  }
+
+  if ('avatar' in value) {
+    if (value.avatar === null || value.avatar === '') {
+      patch.avatar = null
+    } else if (isAvatar(value.avatar)) {
+      patch.avatar = value.avatar
+    } else {
+      return null
+    }
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null
+}
+
 export function mergePlayer(documentValue, payload, now = new Date().toISOString()) {
   const document = normalizeDocument(documentValue, now)
   const existingIndex = document.players.findIndex(
@@ -277,6 +316,36 @@ export class GitHubGistStore {
     })
   }
 
+  async updatePlayer(playerId, patch, now) {
+    return this.withWriteLock(async () => {
+      const current = await this.read({ fresh: true })
+      const playerIndex = current.players.findIndex((player) => player.id === playerId)
+      if (playerIndex < 0) {
+        const error = new Error('Player not found')
+        error.status = 404
+        throw error
+      }
+      const nowString = now()
+      const nextPlayer = {
+        ...current.players[playerIndex],
+        ...patch,
+        updatedAt: nowString,
+      }
+      if (patch.avatar === null) delete nextPlayer.avatar
+
+      const players = [...current.players]
+      players[playerIndex] = nextPlayer
+      const next = { version: 1, players, updatedAt: nowString }
+      const updatedGist = await this.patchFiles({
+        [backupFileName('before-edit', nowString)]: { content: JSON.stringify(current) },
+        [FILE_NAME]: { content: JSON.stringify(next) },
+      })
+      const persisted = this.documentFromUpdatedGist(updatedGist)
+      this.cache = { document: persisted, savedAt: Date.now() }
+      return persisted
+    })
+  }
+
   async reset(now) {
     return this.withWriteLock(async () => {
       const current = await this.read()
@@ -389,8 +458,8 @@ export function createHandler({
     if (request.method === 'OPTIONS') {
       response.writeHead(204, {
         ...corsHeaders,
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Token, Authorization',
         'Access-Control-Max-Age': '86400',
       })
       response.end()
@@ -435,6 +504,12 @@ export function createHandler({
             'GET /api/version',
             'GET /api/leaderboard',
             'POST /api/players/sync',
+            'GET /api/admin/export',
+            'POST /api/admin/backup',
+            'GET /api/admin/backups',
+            'PATCH /api/admin/players/{playerId}',
+            'DELETE /api/admin/players/{playerId}',
+            'POST /api/admin/reset',
           ],
         }, corsHeaders)
         return
@@ -481,12 +556,26 @@ export function createHandler({
           sendJson(response, 200, await store.reset(now), corsHeaders)
           return
         }
-        const deleteMatch = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/)
-        if (request.method === 'DELETE' && deleteMatch) {
+        const playerMatch = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/)
+        if (request.method === 'PATCH' && playerMatch) {
+          const patch = validateAdminPlayerPatch(await readJsonBody(request))
+          if (!patch) {
+            sendJson(response, 400, { error: 'Invalid player update payload' }, corsHeaders)
+            return
+          }
           sendJson(
             response,
             200,
-            await store.removePlayer(decodeURIComponent(deleteMatch[1]), now),
+            await store.updatePlayer(decodeURIComponent(playerMatch[1]), patch, now),
+            corsHeaders,
+          )
+          return
+        }
+        if (request.method === 'DELETE' && playerMatch) {
+          sendJson(
+            response,
+            200,
+            await store.removePlayer(decodeURIComponent(playerMatch[1]), now),
             corsHeaders,
           )
           return

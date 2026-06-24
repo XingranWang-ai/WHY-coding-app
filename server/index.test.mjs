@@ -38,6 +38,30 @@ class MemoryStore {
     return this.document
   }
 
+  async updatePlayer(playerId, patch, now) {
+    await this.backup('before-edit', now)
+    const playerIndex = this.document.players.findIndex((player) => player.id === playerId)
+    if (playerIndex < 0) {
+      const error = new Error('Player not found')
+      error.status = 404
+      throw error
+    }
+    const nextPlayer = {
+      ...this.document.players[playerIndex],
+      ...patch,
+      updatedAt: now(),
+    }
+    if (patch.avatar === null) delete nextPlayer.avatar
+    const players = [...this.document.players]
+    players[playerIndex] = nextPlayer
+    this.document = {
+      version: 1,
+      players,
+      updatedAt: now(),
+    }
+    return this.document
+  }
+
   async reset(now) {
     await this.backup('before-reset', now)
     this.document = { version: 1, players: [], updatedAt: now() }
@@ -140,6 +164,16 @@ test('admin endpoints require a token and can operate on the leaderboard', async
   const exported = await fetch(`${baseUrl}/api/admin/export`, { headers })
   assert.equal(exported.status, 200)
   assert.equal((await exported.json()).players.length, 1)
+
+  const updated = await fetch(`${baseUrl}/api/admin/players/player-12345678`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nickname: 'Grace', solved: 9, avatar: null }),
+  })
+  assert.equal(updated.status, 200)
+  const updatedDocument = await updated.json()
+  assert.equal(updatedDocument.players[0].nickname, 'Grace')
+  assert.equal(updatedDocument.players[0].solved, 9)
 
   const backup = await fetch(`${baseUrl}/api/admin/backup`, { method: 'POST', headers })
   assert.equal(backup.status, 200)
