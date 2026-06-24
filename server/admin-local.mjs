@@ -6,6 +6,7 @@ const DEFAULT_API_BASE = process.env.WHY_ADMIN_API_BASE ??
 const DEFAULT_PORT = Number.parseInt(process.env.WHY_ADMIN_PORT ?? '8790', 10)
 const MAX_PROXY_BODY_BYTES = 64_000
 const PROXY_TIMEOUT_MS = Number.parseInt(process.env.WHY_ADMIN_PROXY_TIMEOUT_MS ?? '35000', 10)
+const MAX_AVATAR_DATA_URL_LENGTH = 9_000
 const ALLOWED_METHODS = new Set(['GET', 'POST', 'PATCH', 'DELETE'])
 
 function isAllowedProxyPath(pathname) {
@@ -280,6 +281,38 @@ function adminHtml() {
     .side { padding: 18px; position: sticky; top: 16px; }
     .side h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: -0.03em; }
     .field { margin-bottom: 13px; }
+    .avatar-editor {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #f8fafc;
+      margin-bottom: 13px;
+    }
+    .avatar-preview {
+      width: 68px;
+      height: 68px;
+      border-radius: 22px;
+      object-fit: cover;
+      background: linear-gradient(135deg, #ddd6fe, #cffafe);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #5b21b6;
+      font-size: 24px;
+      font-weight: 950;
+      box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.12);
+    }
+    .avatar-tools { display: grid; gap: 8px; }
+    .file-input {
+      padding: 10px;
+      border-style: dashed;
+      background: #fff;
+    }
+    .avatar-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
     .side-actions { display: grid; gap: 10px; }
     .empty { color: var(--muted); line-height: 1.7; padding: 18px; }
     .backups { margin-top: 18px; padding: 16px; }
@@ -290,6 +323,10 @@ function adminHtml() {
       header { flex-direction: column; }
       .side { position: static; }
       .toolbar { flex-direction: column; align-items: stretch; }
+      th, td { padding: 10px 12px; }
+      .user { min-width: 0; }
+      .score { font-size: 20px; }
+      th:nth-child(3), td:nth-child(3),
       th:nth-child(4), td:nth-child(4) { display: none; }
     }
   </style>
@@ -375,11 +412,14 @@ function adminHtml() {
 
   <script>
     const DEFAULT_API_BASE = ${JSON.stringify(DEFAULT_API_BASE)};
+    const MAX_AVATAR_DATA_URL_LENGTH = ${MAX_AVATAR_DATA_URL_LENGTH};
     const state = {
       status: null,
       ready: null,
       document: null,
       selectedId: '',
+      pendingAvatarData: '',
+      pendingAvatarRemoval: false,
       loadedFromAdmin: false,
       busy: false
     };
@@ -508,6 +548,24 @@ function adminHtml() {
       return '<span class="avatar">' + escapeHtml(initial) + '</span>';
     }
 
+    function avatarPreviewMarkup(player) {
+      const avatar = state.pendingAvatarRemoval ? '' : (state.pendingAvatarData || player.avatar);
+      if (avatar) {
+        return '<img class="avatar-preview" src="' + escapeHtml(avatar) + '" alt="头像预览">';
+      }
+      const initial = String(player.nickname || '?').slice(0, 1).toUpperCase();
+      return '<span class="avatar-preview">' + escapeHtml(initial) + '</span>';
+    }
+
+    function setSelectedPlayer(playerId) {
+      if (state.selectedId !== playerId) {
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
+      }
+      state.selectedId = playerId;
+      render();
+    }
+
     function renderStatus() {
       const connected = Boolean(state.status);
       const adminEnabled = Boolean(state.status && state.status.adminEnabled);
@@ -543,16 +601,78 @@ function adminHtml() {
       }).join('');
       els.playersBody.querySelectorAll('[data-action="select"]').forEach(function (button) {
         button.addEventListener('click', function () {
-          state.selectedId = button.dataset.id;
-          render();
+          setSelectedPlayer(button.dataset.id);
         });
       });
       els.playersBody.querySelectorAll('tr[data-id]').forEach(function (row) {
         row.addEventListener('dblclick', function () {
-          state.selectedId = row.dataset.id;
-          render();
+          setSelectedPlayer(row.dataset.id);
         });
       });
+    }
+
+    function loadImage(file) {
+      return new Promise(function (resolve, reject) {
+        const imageUrl = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = function () {
+          URL.revokeObjectURL(imageUrl);
+          resolve(image);
+        };
+        image.onerror = function () {
+          URL.revokeObjectURL(imageUrl);
+          reject(new Error('头像图片读取失败，请换一张图片。'));
+        };
+        image.src = imageUrl;
+      });
+    }
+
+    async function resizeAvatarFile(file) {
+      if (!file || !file.type || !file.type.startsWith('image/')) {
+        throw new Error('请选择 jpg、png 或 webp 图片。');
+      }
+      const image = await loadImage(file);
+      const sourceSide = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = Math.floor((image.naturalWidth - sourceSide) / 2);
+      const sourceY = Math.floor((image.naturalHeight - sourceSide) / 2);
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('当前浏览器不支持头像压缩。');
+
+      const sizes = [160, 128, 96, 72, 56];
+      const qualities = [0.82, 0.72, 0.62, 0.52, 0.42];
+      let smallest = '';
+      for (const size of sizes) {
+        canvas.width = size;
+        canvas.height = size;
+        context.clearRect(0, 0, size, size);
+        context.drawImage(image, sourceX, sourceY, sourceSide, sourceSide, 0, 0, size, size);
+        for (const quality of qualities) {
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          smallest = dataUrl;
+          if (dataUrl.length <= MAX_AVATAR_DATA_URL_LENGTH) return dataUrl;
+        }
+      }
+      throw new Error('这张头像压缩后仍然太大，请换一张更简单的图片。当前最小长度：' + smallest.length);
+    }
+
+    async function handleAvatarFileChange(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      setMessage('正在压缩头像……');
+      try {
+        state.pendingAvatarData = await resizeAvatarFile(file);
+        state.pendingAvatarRemoval = false;
+        const removeAvatar = document.getElementById('removeAvatar');
+        if (removeAvatar) removeAvatar.checked = false;
+        setMessage('头像已载入预览，点“保存修改”后才会写入排行榜。', 'ok');
+        render();
+      } catch (error) {
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
+        setMessage(error.message, 'bad');
+        event.target.value = '';
+      }
     }
 
     function renderDetail() {
@@ -566,7 +686,18 @@ function adminHtml() {
         '<div class="user" style="margin-bottom:16px">' + avatarMarkup(player) + '<div><div class="nickname">' + escapeHtml(player.nickname) + '</div><div class="id">' + escapeHtml(player.id) + '</div></div></div>' +
         '<div class="field"><label for="editNickname">昵称</label><input id="editNickname" maxlength="30" value="' + escapeHtml(player.nickname) + '"></div>' +
         '<div class="field"><label for="editSolved">完成题数</label><input id="editSolved" type="number" min="0" max="10000000" step="1" value="' + escapeHtml(player.solved) + '"></div>' +
-        '<div class="field token-row"><input id="removeAvatar" type="checkbox"><span class="small">保存时清除头像</span></div>' +
+        '<div class="avatar-editor">' +
+          avatarPreviewMarkup(player) +
+          '<div class="avatar-tools">' +
+            '<label for="avatarFile">头像</label>' +
+            '<input class="file-input" id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp">' +
+            '<div class="actions">' +
+              '<button class="ghost" id="discardAvatarButton" type="button">丢弃新头像</button>' +
+            '</div>' +
+            '<div class="avatar-note">可直接上传新头像；保存时会同步到排行榜。图片会在本地自动裁剪压缩。</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="field token-row"><input id="removeAvatar" type="checkbox"' + (state.pendingAvatarRemoval ? ' checked' : '') + '><span class="small">保存时清除当前头像</span></div>' +
         '<div class="side-actions">' +
           '<button class="primary" id="savePlayerButton">保存修改</button>' +
           '<button class="ghost" id="copyIdButton">复制玩家 ID</button>' +
@@ -574,6 +705,20 @@ function adminHtml() {
         '</div>' +
         '<p class="small">编辑/删除会自动创建 before-edit 或 before-delete 备份文件。</p>';
       document.getElementById('savePlayerButton').addEventListener('click', saveSelectedPlayer);
+      document.getElementById('avatarFile').addEventListener('change', handleAvatarFileChange);
+      document.getElementById('discardAvatarButton').addEventListener('click', function () {
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
+        const removeAvatar = document.getElementById('removeAvatar');
+        if (removeAvatar) removeAvatar.checked = false;
+        setMessage('已丢弃未保存的新头像。');
+        render();
+      });
+      document.getElementById('removeAvatar').addEventListener('change', function (event) {
+        state.pendingAvatarRemoval = event.target.checked;
+        if (state.pendingAvatarRemoval) state.pendingAvatarData = '';
+        render();
+      });
       document.getElementById('deletePlayerButton').addEventListener('click', deleteSelectedPlayer);
       document.getElementById('copyIdButton').addEventListener('click', function () {
         navigator.clipboard.writeText(player.id).then(function () {
@@ -640,7 +785,7 @@ function adminHtml() {
       if (!player) return;
       const nickname = document.getElementById('editNickname').value.trim();
       const solved = Number.parseInt(document.getElementById('editSolved').value, 10);
-      const removeAvatar = document.getElementById('removeAvatar').checked;
+      const removeAvatar = state.pendingAvatarRemoval;
       if (!nickname) {
         setMessage('昵称不能为空。', 'bad');
         return;
@@ -651,6 +796,7 @@ function adminHtml() {
       }
       const patch = { nickname: nickname, solved: solved };
       if (removeAvatar) patch.avatar = null;
+      else if (state.pendingAvatarData) patch.avatar = state.pendingAvatarData;
       setBusy(true);
       setMessage('正在保存用户修改……');
       try {
@@ -659,6 +805,8 @@ function adminHtml() {
           admin: true,
           body: patch
         });
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
         state.loadedFromAdmin = true;
         setMessage('用户已更新，并已自动备份。', 'ok');
         render();
@@ -681,6 +829,8 @@ function adminHtml() {
           admin: true
         });
         state.selectedId = '';
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
         state.loadedFromAdmin = true;
         setMessage('用户已删除，并已自动备份。', 'ok');
         render();
@@ -721,6 +871,8 @@ function adminHtml() {
       try {
         state.document = await proxy('/api/admin/reset', { method: 'POST', admin: true });
         state.selectedId = '';
+        state.pendingAvatarData = '';
+        state.pendingAvatarRemoval = false;
         state.loadedFromAdmin = true;
         setMessage('榜单已清空，并已自动备份。', 'ok');
         render();

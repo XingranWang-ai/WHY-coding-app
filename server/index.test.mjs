@@ -168,12 +168,17 @@ test('admin endpoints require a token and can operate on the leaderboard', async
   const updated = await fetch(`${baseUrl}/api/admin/players/player-12345678`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname: 'Grace', solved: 9, avatar: null }),
+    body: JSON.stringify({
+      nickname: 'Grace',
+      solved: 9,
+      avatar: 'data:image/png;base64,iVBORw0KGgo=',
+    }),
   })
   assert.equal(updated.status, 200)
   const updatedDocument = await updated.json()
   assert.equal(updatedDocument.players[0].nickname, 'Grace')
   assert.equal(updatedDocument.players[0].solved, 9)
+  assert.equal(updatedDocument.players[0].avatar, 'data:image/png;base64,iVBORw0KGgo=')
 
   const backup = await fetch(`${baseUrl}/api/admin/backup`, { method: 'POST', headers })
   assert.equal(backup.status, 200)
