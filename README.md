@@ -84,4 +84,5 @@ npm.cmd run android:build
 
 后端入口为 `server/index.mjs`，本地启动前需设置 `GITHUB_TOKEN` 和
 `LEADERBOARD_GIST_ID`。Render 部署配置见 `render.yaml`，完整上线步骤见
-`docs/NETWORK_RECOVERY.md`。
+`docs/NETWORK_RECOVERY.md`。后端提供公开同步接口、就绪检查、状态接口，以及带
+`ADMIN_TOKEN` 的导出、备份、删除玩家和清空排行榜等管理员接口。

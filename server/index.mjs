@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
 
 const FILE_NAME = 'leaderboard.json'
+const BACKUP_PREFIX = 'leaderboard-backup-'
 const MAX_PLAYERS = 100
 const MAX_AVATAR_LENGTH = 9_000
 const MAX_BODY_BYTES = 32_000
@@ -15,6 +16,16 @@ const DEFAULT_ALLOWED_ORIGINS = [
 
 function emptyDocument(now = new Date().toISOString()) {
   return { version: 1, players: [], updatedAt: now }
+}
+
+function backupFileName(reason, nowString) {
+  const stamp = nowString.replace(/[:.]/g, '-').replace(/[^0-9TZ-]/g, '')
+  const cleanReason = String(reason || 'manual')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'manual'
+  return `${BACKUP_PREFIX}${stamp}-${cleanReason}.json`
 }
 
 function isAvatar(value) {
@@ -155,6 +166,33 @@ export class GitHubGistStore {
     }
   }
 
+  documentFromUpdatedGist(gist) {
+    const content = gist.files?.[FILE_NAME]?.content
+    if (typeof content !== 'string') {
+      throw new Error('GitHub did not return the leaderboard file')
+    }
+    return normalizeDocument(JSON.parse(content))
+  }
+
+  async patchFiles(files) {
+    const response = await fetchWithRetry(
+      `https://api.github.com/gists/${this.gistId}`,
+      {
+        method: 'PATCH',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ files }),
+      },
+    )
+    if (!response.ok) throw new Error(`Unable to update leaderboard store: ${response.status}`)
+    return response.json()
+  }
+
+  async withWriteLock(operation) {
+    const result = this.writeQueue.then(operation, operation)
+    this.writeQueue = result.catch(() => undefined)
+    return result
+  }
+
   async read({ fresh = false } = {}) {
     if (!fresh && this.cache && Date.now() - this.cache.savedAt < 15_000) {
       return this.cache.document
@@ -182,27 +220,14 @@ export class GitHubGistStore {
   }
 
   async syncPlayer(payload, now) {
-    const operation = async () => {
+    return this.withWriteLock(async () => {
       const current = await this.read()
       if (!needsPlayerUpdate(current, payload)) return current
       const next = mergePlayer(current, payload, now())
-      const response = await fetchWithRetry(
-        `https://api.github.com/gists/${this.gistId}`,
-        {
-          method: 'PATCH',
-          headers: this.headers({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            files: { [FILE_NAME]: { content: JSON.stringify(next) } },
-          }),
-        },
-      )
-      if (!response.ok) throw new Error(`Unable to update leaderboard store: ${response.status}`)
-      const updatedGist = await response.json()
-      const persistedContent = updatedGist.files?.[FILE_NAME]?.content
-      if (typeof persistedContent !== 'string') {
-        throw new Error('GitHub did not confirm the leaderboard update')
-      }
-      const persisted = normalizeDocument(JSON.parse(persistedContent))
+      const updatedGist = await this.patchFiles({
+        [FILE_NAME]: { content: JSON.stringify(next) },
+      })
+      const persisted = this.documentFromUpdatedGist(updatedGist)
       const savedPlayer = persisted.players.find(
         (player) => player.id === payload.profile.id,
       )
@@ -211,10 +236,60 @@ export class GitHubGistStore {
       }
       this.cache = { document: persisted, savedAt: Date.now() }
       return persisted
-    }
-    const result = this.writeQueue.then(operation, operation)
-    this.writeQueue = result.catch(() => undefined)
-    return result
+    })
+  }
+
+  async backup(reason, now) {
+    return this.withWriteLock(async () => {
+      const current = await this.read({ fresh: true })
+      const fileName = backupFileName(reason, now())
+      await this.patchFiles({ [fileName]: { content: JSON.stringify(current) } })
+      return { fileName, players: current.players.length, updatedAt: current.updatedAt }
+    })
+  }
+
+  async listBackups() {
+    const response = await fetchWithRetry(
+      `https://api.github.com/gists/${this.gistId}`,
+      { headers: this.headers() },
+    )
+    if (!response.ok) throw new Error(`Unable to list backups: ${response.status}`)
+    const gist = await response.json()
+    return Object.keys(gist.files ?? {})
+      .filter((name) => name.startsWith(BACKUP_PREFIX))
+      .sort()
+  }
+
+  async removePlayer(playerId, now) {
+    return this.withWriteLock(async () => {
+      const current = await this.read()
+      const nextPlayers = current.players.filter((player) => player.id !== playerId)
+      if (nextPlayers.length === current.players.length) return current
+      const nowString = now()
+      const next = { version: 1, players: nextPlayers, updatedAt: nowString }
+      const updatedGist = await this.patchFiles({
+        [backupFileName('before-delete', nowString)]: { content: JSON.stringify(current) },
+        [FILE_NAME]: { content: JSON.stringify(next) },
+      })
+      const persisted = this.documentFromUpdatedGist(updatedGist)
+      this.cache = { document: persisted, savedAt: Date.now() }
+      return persisted
+    })
+  }
+
+  async reset(now) {
+    return this.withWriteLock(async () => {
+      const current = await this.read()
+      const nowString = now()
+      const next = emptyDocument(nowString)
+      const updatedGist = await this.patchFiles({
+        [backupFileName('before-reset', nowString)]: { content: JSON.stringify(current) },
+        [FILE_NAME]: { content: JSON.stringify(next) },
+      })
+      const persisted = this.documentFromUpdatedGist(updatedGist)
+      this.cache = { document: persisted, savedAt: Date.now() }
+      return persisted
+    })
   }
 }
 
@@ -272,11 +347,30 @@ function requestId(request) {
     .slice(0, 16)
 }
 
+function isAdminRequest(request, adminToken) {
+  if (!adminToken) return false
+  const headerToken = request.headers['x-admin-token']
+  const auth = request.headers.authorization
+  const bearer = typeof auth === 'string' && auth.startsWith('Bearer ')
+    ? auth.slice('Bearer '.length)
+    : ''
+  return headerToken === adminToken || bearer === adminToken
+}
+
+function adminDisabled(response, corsHeaders) {
+  sendJson(response, 503, { error: 'Admin API is not configured' }, corsHeaders)
+}
+
+function adminForbidden(response, corsHeaders) {
+  sendJson(response, 403, { error: 'Admin token is required' }, corsHeaders)
+}
+
 export function createHandler({
   store,
   now = () => new Date().toISOString(),
   allowedOrigins = DEFAULT_ALLOWED_ORIGINS,
   versionInfo,
+  adminToken = '',
   rateLimit = 120,
 }) {
   const allowRequest = createRateLimiter(rateLimit)
@@ -317,6 +411,34 @@ export function createHandler({
     }
 
     try {
+      if (request.method === 'GET' && url.pathname === '/ready') {
+        const document = await store.read({ fresh: true })
+        sendJson(response, 200, {
+          status: 'ready',
+          players: document.players.length,
+          updatedAt: document.updatedAt,
+        }, corsHeaders)
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/api/status') {
+        sendJson(response, 200, {
+          status: 'ok',
+          service: 'why-sync-api',
+          version: versionInfo.version,
+          versionCode: versionInfo.versionCode,
+          uptimeSeconds: Math.floor(process.uptime()),
+          adminEnabled: Boolean(adminToken),
+          endpoints: [
+            'GET /health',
+            'GET /ready',
+            'GET /api/status',
+            'GET /api/version',
+            'GET /api/leaderboard',
+            'POST /api/players/sync',
+          ],
+        }, corsHeaders)
+        return
+      }
       if (request.method === 'GET' && url.pathname === '/api/leaderboard') {
         sendJson(response, 200, await store.read(), corsHeaders)
         return
@@ -333,6 +455,42 @@ export function createHandler({
       if (request.method === 'GET' && url.pathname === '/api/version') {
         sendJson(response, 200, versionInfo, corsHeaders)
         return
+      }
+      if (url.pathname.startsWith('/api/admin/')) {
+        if (!adminToken) {
+          adminDisabled(response, corsHeaders)
+          return
+        }
+        if (!isAdminRequest(request, adminToken)) {
+          adminForbidden(response, corsHeaders)
+          return
+        }
+        if (request.method === 'GET' && url.pathname === '/api/admin/export') {
+          sendJson(response, 200, await store.read({ fresh: true }), corsHeaders)
+          return
+        }
+        if (request.method === 'GET' && url.pathname === '/api/admin/backups') {
+          sendJson(response, 200, { backups: await store.listBackups() }, corsHeaders)
+          return
+        }
+        if (request.method === 'POST' && url.pathname === '/api/admin/backup') {
+          sendJson(response, 200, await store.backup('manual', now), corsHeaders)
+          return
+        }
+        if (request.method === 'POST' && url.pathname === '/api/admin/reset') {
+          sendJson(response, 200, await store.reset(now), corsHeaders)
+          return
+        }
+        const deleteMatch = url.pathname.match(/^\/api\/admin\/players\/([^/]+)$/)
+        if (request.method === 'DELETE' && deleteMatch) {
+          sendJson(
+            response,
+            200,
+            await store.removePlayer(decodeURIComponent(deleteMatch[1]), now),
+            corsHeaders,
+          )
+          return
+        }
       }
       sendJson(response, 404, { error: 'Not found' }, corsHeaders)
     } catch (error) {
@@ -373,6 +531,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const server = createServer(createHandler({
     store,
     allowedOrigins,
+    adminToken: process.env.ADMIN_TOKEN ?? '',
     versionInfo: versionInfoFromEnvironment(),
   }))
   const port = Number.parseInt(process.env.PORT ?? '8787', 10)

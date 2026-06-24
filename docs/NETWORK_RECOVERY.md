@@ -18,6 +18,7 @@
 4. 等待 `why-sync-api-xingran` 状态变为 Live。
 5. 验证：
    - `https://why-sync-api-xingran.onrender.com/health` 应返回 `{"status":"ok"}`。
+   - `https://why-sync-api-xingran.onrender.com/ready` 应返回 `{"status":"ready", ...}`。
    - `https://why-sync-api-xingran.onrender.com/api/leaderboard` 应返回排行榜 JSON。
 
 ## 本地验证
@@ -32,8 +33,31 @@ npm.cmd run server:start
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8787/health
+Invoke-RestMethod http://127.0.0.1:8787/ready
 npm.cmd run test:server
 ```
+
+## 后端接口
+
+公开接口：
+
+- `GET /health`：轻量存活检查，不访问存储。
+- `GET /ready`：就绪检查，会读取持久存储。
+- `GET /api/status`：服务版本、运行时间、是否启用管理员接口。
+- `GET /api/version`：当前 App 更新信息。
+- `GET /api/leaderboard`：排行榜。
+- `POST /api/players/sync`：同步玩家资料与刷题数，刷题数只增不减。
+
+管理员接口需要设置 `ADMIN_TOKEN`，并在请求中带上
+`X-Admin-Token: <ADMIN_TOKEN>` 或 `Authorization: Bearer <ADMIN_TOKEN>`：
+
+- `GET /api/admin/export`：导出完整排行榜文档。
+- `POST /api/admin/backup`：手动创建 Gist 备份文件。
+- `GET /api/admin/backups`：列出备份文件。
+- `DELETE /api/admin/players/{playerId}`：删除单个玩家，删除前自动备份。
+- `POST /api/admin/reset`：清空排行榜，清空前自动备份。
+
+如果 Render 里没有设置 `ADMIN_TOKEN`，管理员接口会返回 503，普通 App 同步不受影响。
 
 ## 故障切换
 
