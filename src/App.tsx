@@ -233,16 +233,90 @@ function createThemeStyle(settings: ThemeSettings) {
   } as CSSProperties
 }
 
-async function resizeAvatar(file: File) {
-  if (!file.type.startsWith('image/')) throw new Error('请选择图片文件')
-  if (file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB')
+type AvatarDrawable = {
+  source: CanvasImageSource
+  width: number
+  height: number
+  close: () => void
+}
+
+function isSupportedAvatarFile(file: File) {
+  const type = file.type.toLowerCase()
+  const name = file.name.toLowerCase()
+  return type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/.test(name)
+}
+
+function loadImageUrl(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(image)
+      else reject(new Error('图片读取失败，请换一张'))
+    }
+    image.onerror = () => reject(new Error('图片读取失败，请换一张'))
+    image.src = url
+  })
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('图片读取失败，请换一张'))
+    }
+    reader.onerror = () => reject(new Error('图片读取失败，请换一张'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function loadAvatarDrawable(file: File): Promise<AvatarDrawable> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file)
+      if (bitmap.width > 0 && bitmap.height > 0) {
+        return {
+          source: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+          close: () => bitmap.close(),
+        }
+      }
+    } catch {
+      // Fall back below. Different browsers decode phone-exported JPGs through
+      // different paths; using more than one path keeps uploads resilient.
+    }
+  }
 
   const objectUrl = URL.createObjectURL(file)
   try {
-    const image = new Image()
-    image.src = objectUrl
-    await image.decode()
+    const image = await loadImageUrl(objectUrl)
+    return {
+      source: image,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      close: () => URL.revokeObjectURL(objectUrl),
+    }
+  } catch {
+    URL.revokeObjectURL(objectUrl)
+  }
 
+  const dataUrl = await readFileAsDataUrl(file)
+  const image = await loadImageUrl(dataUrl)
+  return {
+    source: image,
+    width: image.naturalWidth || image.width,
+    height: image.naturalHeight || image.height,
+    close: () => {},
+  }
+}
+
+async function resizeAvatar(file: File) {
+  if (!isSupportedAvatarFile(file)) throw new Error('请选择图片文件')
+  if (file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB')
+
+  const image = await loadAvatarDrawable(file)
+  try {
     const render = (size: number, quality: number) => {
       const canvas = document.createElement('canvas')
       canvas.width = size
@@ -250,13 +324,13 @@ async function resizeAvatar(file: File) {
       const context = canvas.getContext('2d')
       if (!context) throw new Error('头像处理失败')
 
-      const cropSize = Math.min(image.naturalWidth, image.naturalHeight)
-      const sourceX = (image.naturalWidth - cropSize) / 2
-      const sourceY = (image.naturalHeight - cropSize) / 2
+      const cropSize = Math.min(image.width, image.height)
+      const sourceX = (image.width - cropSize) / 2
+      const sourceY = (image.height - cropSize) / 2
       context.fillStyle = '#f4efe5'
       context.fillRect(0, 0, size, size)
       context.drawImage(
-        image,
+        image.source,
         sourceX,
         sourceY,
         cropSize,
@@ -279,7 +353,7 @@ async function resizeAvatar(file: File) {
     }
     throw new Error('图片内容过于复杂，请换一张')
   } finally {
-    URL.revokeObjectURL(objectUrl)
+    image.close()
   }
 }
 

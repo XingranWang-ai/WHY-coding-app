@@ -700,49 +700,116 @@ function adminHtml() {
       });
     }
 
-    function loadImage(file) {
+    function isSupportedAvatarFile(file) {
+      const type = String(file && file.type ? file.type : '').toLowerCase();
+      const name = String(file && file.name ? file.name : '').toLowerCase();
+      return type.startsWith('image/') || /\\.(jpe?g|png|webp|gif|bmp)$/.test(name);
+    }
+
+    function readFileAsDataUrl(file) {
       return new Promise(function (resolve, reject) {
-        const imageUrl = URL.createObjectURL(file);
-        const image = new Image();
-        image.onload = function () {
-          URL.revokeObjectURL(imageUrl);
-          resolve(image);
+        const reader = new FileReader();
+        reader.onload = function () {
+          if (typeof reader.result === 'string') resolve(reader.result);
+          else reject(new Error('头像图片读取失败，请换一张图片。'));
         };
-        image.onerror = function () {
-          URL.revokeObjectURL(imageUrl);
+        reader.onerror = function () {
           reject(new Error('头像图片读取失败，请换一张图片。'));
         };
-        image.src = imageUrl;
+        reader.readAsDataURL(file);
       });
     }
 
+    function loadImageUrl(url) {
+      return new Promise(function (resolve, reject) {
+        const image = new Image();
+        image.onload = function () {
+          if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(image);
+          else reject(new Error('头像图片读取失败，请换一张图片。'));
+        };
+        image.onerror = function () {
+          reject(new Error('头像图片读取失败，请换一张图片。'));
+        };
+        image.src = url;
+      });
+    }
+
+    async function loadAvatarDrawable(file) {
+      if ('createImageBitmap' in window) {
+        try {
+          const bitmap = await createImageBitmap(file);
+          if (bitmap.width > 0 && bitmap.height > 0) {
+            return {
+              source: bitmap,
+              width: bitmap.width,
+              height: bitmap.height,
+              close: function () {
+                if (typeof bitmap.close === 'function') bitmap.close();
+              },
+            };
+          }
+        } catch {
+          // Fall through to URL/data-url based decoding. Some phone-exported JPGs
+          // fail one browser decode path but still load through another.
+        }
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const image = await loadImageUrl(objectUrl);
+        return {
+          source: image,
+          width: image.naturalWidth || image.width,
+          height: image.naturalHeight || image.height,
+          close: function () {
+            URL.revokeObjectURL(objectUrl);
+          },
+        };
+      } catch {
+        URL.revokeObjectURL(objectUrl);
+      }
+
+      const dataUrl = await readFileAsDataUrl(file);
+      const image = await loadImageUrl(dataUrl);
+      return {
+        source: image,
+        width: image.naturalWidth || image.width,
+        height: image.naturalHeight || image.height,
+        close: function () {},
+      };
+    }
+
     async function resizeAvatarFile(file) {
-      if (!file || !file.type || !file.type.startsWith('image/')) {
+      if (!file || !isSupportedAvatarFile(file)) {
         throw new Error('请选择 jpg、png 或 webp 图片。');
       }
-      const image = await loadImage(file);
-      const sourceSide = Math.min(image.naturalWidth, image.naturalHeight);
-      const sourceX = Math.floor((image.naturalWidth - sourceSide) / 2);
-      const sourceY = Math.floor((image.naturalHeight - sourceSide) / 2);
+      const image = await loadAvatarDrawable(file);
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       if (!context) throw new Error('当前浏览器不支持头像压缩。');
 
-      const sizes = [160, 128, 96, 72, 56];
-      const qualities = [0.82, 0.72, 0.62, 0.52, 0.42];
-      let smallest = '';
-      for (const size of sizes) {
-        canvas.width = size;
-        canvas.height = size;
-        context.clearRect(0, 0, size, size);
-        context.drawImage(image, sourceX, sourceY, sourceSide, sourceSide, 0, 0, size, size);
-        for (const quality of qualities) {
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
-          smallest = dataUrl;
-          if (dataUrl.length <= MAX_AVATAR_DATA_URL_LENGTH) return dataUrl;
+      try {
+        const sourceSide = Math.min(image.width, image.height);
+        const sourceX = Math.floor((image.width - sourceSide) / 2);
+        const sourceY = Math.floor((image.height - sourceSide) / 2);
+        const sizes = [160, 128, 96, 72, 56];
+        const qualities = [0.82, 0.72, 0.62, 0.52, 0.42];
+        let smallest = '';
+        for (const size of sizes) {
+          canvas.width = size;
+          canvas.height = size;
+          context.clearRect(0, 0, size, size);
+          context.drawImage(image.source, sourceX, sourceY, sourceSide, sourceSide, 0, 0, size, size);
+          for (const quality of qualities) {
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            smallest = dataUrl;
+            if (dataUrl.length <= MAX_AVATAR_DATA_URL_LENGTH) return dataUrl;
+          }
         }
+        throw new Error('这张头像压缩后仍然太大，请换一张更简单的图片。当前最小长度：' + smallest.length);
+      } finally {
+        image.close();
       }
-      throw new Error('这张头像压缩后仍然太大，请换一张更简单的图片。当前最小长度：' + smallest.length);
     }
 
     async function handleAvatarFileChange(event) {
@@ -1289,7 +1356,7 @@ export function createAdminHandler() {
           'Content-Length': Buffer.byteLength(adminHtml()),
           'Cache-Control': 'no-store',
           'X-Content-Type-Options': 'nosniff',
-          'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'self'; form-action 'none'",
+          'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'self'; form-action 'none'",
         })
         response.end(adminHtml())
         return
