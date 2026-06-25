@@ -7,6 +7,7 @@ const BACKUP_PREFIX = 'leaderboard-backup-'
 const MAX_PLAYERS = 100
 const MAX_AVATAR_LENGTH = 9_000
 const MAX_BODY_BYTES = 32_000
+const MAX_IMPORT_BODY_BYTES = 1_200_000
 const AVATAR_PATTERN = /^data:image\/(?:jpeg|png|webp);base64,/i
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://localhost',
@@ -34,6 +35,18 @@ function isAvatar(value) {
     value.length <= MAX_AVATAR_LENGTH &&
     AVATAR_PATTERN.test(value)
   )
+}
+
+function isPlayerId(value) {
+  return typeof value === 'string' && value.length >= 8 && value.length <= 80
+}
+
+function importPlayerIdForNickname(nickname) {
+  const hash = createHash('sha256')
+    .update(nickname.trim().toLowerCase())
+    .digest('hex')
+    .slice(0, 24)
+  return `import-${hash}`
 }
 
 function cleanPlayer(value) {
@@ -138,6 +151,93 @@ export function validateAdminPlayerPatch(value) {
   }
 
   return Object.keys(patch).length > 0 ? patch : null
+}
+
+function cleanImportPlayer(value) {
+  if (!value || typeof value !== 'object') return null
+  const nickname = value.nickname ?? value.name
+  if (
+    (value.id !== undefined && !isPlayerId(value.id)) ||
+    typeof nickname !== 'string' ||
+    nickname.trim().length < 1 ||
+    nickname.trim().length > 30 ||
+    !Number.isSafeInteger(value.solved) ||
+    value.solved < 0 ||
+    value.solved > 10_000_000
+  ) {
+    return null
+  }
+
+  const player = {
+    ...(value.id ? { id: value.id } : {}),
+    nickname: nickname.trim(),
+    solved: value.solved,
+  }
+  if ('avatar' in value) {
+    if (value.avatar === null || value.avatar === '') {
+      player.avatar = null
+    } else if (isAvatar(value.avatar)) {
+      player.avatar = value.avatar
+    } else {
+      return null
+    }
+  }
+  return player
+}
+
+export function validateAdminImportPayload(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.players)) return null
+  if (value.players.length < 1 || value.players.length > MAX_PLAYERS) return null
+  const players = value.players.map(cleanImportPlayer)
+  if (players.some((player) => !player)) return null
+  return players
+}
+
+export function mergeImportedPlayers(documentValue, importPlayers, now = new Date().toISOString()) {
+  const document = normalizeDocument(documentValue, now)
+  const players = [...document.players]
+  let created = 0
+  let updated = 0
+
+  for (const importPlayer of importPlayers) {
+    const existingIndex = importPlayer.id
+      ? players.findIndex((player) => player.id === importPlayer.id)
+      : players.findIndex((player) => player.nickname === importPlayer.nickname)
+    const existing = existingIndex >= 0 ? players[existingIndex] : null
+    const nextPlayer = {
+      ...(existing ?? {}),
+      id: existing?.id ?? importPlayer.id ?? importPlayerIdForNickname(importPlayer.nickname),
+      nickname: importPlayer.nickname,
+      solved: importPlayer.solved,
+      updatedAt: now,
+    }
+    if ('avatar' in importPlayer) {
+      if (importPlayer.avatar === null) delete nextPlayer.avatar
+      else nextPlayer.avatar = importPlayer.avatar
+    }
+
+    if (existingIndex >= 0) {
+      players[existingIndex] = nextPlayer
+      updated += 1
+    } else {
+      players.push(nextPlayer)
+      created += 1
+    }
+  }
+
+  const next = {
+    version: 1,
+    players: players.slice(-MAX_PLAYERS),
+    updatedAt: now,
+  }
+  return {
+    document: next,
+    imported: {
+      total: importPlayers.length,
+      created,
+      updated,
+    },
+  }
 }
 
 export function mergePlayer(documentValue, payload, now = new Date().toISOString()) {
@@ -346,6 +446,21 @@ export class GitHubGistStore {
     })
   }
 
+  async importPlayers(importPlayers, now) {
+    return this.withWriteLock(async () => {
+      const current = await this.read({ fresh: true })
+      const nowString = now()
+      const next = mergeImportedPlayers(current, importPlayers, nowString)
+      const updatedGist = await this.patchFiles({
+        [backupFileName('before-import', nowString)]: { content: JSON.stringify(current) },
+        [FILE_NAME]: { content: JSON.stringify(next.document) },
+      })
+      const persisted = this.documentFromUpdatedGist(updatedGist)
+      this.cache = { document: persisted, savedAt: Date.now() }
+      return { document: persisted, imported: next.imported }
+    })
+  }
+
   async reset(now) {
     return this.withWriteLock(async () => {
       const current = await this.read()
@@ -374,12 +489,12 @@ function sendJson(response, status, value, extraHeaders = {}) {
   response.end(body)
 }
 
-async function readJsonBody(request) {
+async function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = []
   let size = 0
   for await (const chunk of request) {
     size += chunk.length
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       const error = new Error('Request body is too large')
       error.status = 413
       throw error
@@ -507,6 +622,7 @@ export function createHandler({
             'GET /api/admin/export',
             'POST /api/admin/backup',
             'GET /api/admin/backups',
+            'POST /api/admin/import',
             'PATCH /api/admin/players/{playerId}',
             'DELETE /api/admin/players/{playerId}',
             'POST /api/admin/reset',
@@ -550,6 +666,17 @@ export function createHandler({
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/backup') {
           sendJson(response, 200, await store.backup('manual', now), corsHeaders)
+          return
+        }
+        if (request.method === 'POST' && url.pathname === '/api/admin/import') {
+          const importPlayers = validateAdminImportPayload(
+            await readJsonBody(request, MAX_IMPORT_BODY_BYTES),
+          )
+          if (!importPlayers) {
+            sendJson(response, 400, { error: 'Invalid import payload' }, corsHeaders)
+            return
+          }
+          sendJson(response, 200, await store.importPlayers(importPlayers, now), corsHeaders)
           return
         }
         if (request.method === 'POST' && url.pathname === '/api/admin/reset') {

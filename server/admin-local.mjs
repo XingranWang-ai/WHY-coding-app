@@ -19,6 +19,7 @@ function isAllowedProxyPath(pathname) {
     '/api/admin/export',
     '/api/admin/backups',
     '/api/admin/backup',
+    '/api/admin/import',
     '/api/admin/reset',
   ].includes(pathname) || /^\/api\/admin\/players\/[^/]+$/.test(pathname)
 }
@@ -318,9 +319,53 @@ function adminHtml() {
     .backups { margin-top: 18px; padding: 16px; }
     .backup-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.8; overflow-wrap: anywhere; }
     .small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .import-panel { margin-top: 18px; padding: 18px; }
+    .import-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .import-head h2 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
+    .import-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .import-textarea {
+      min-height: 190px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      line-height: 1.55;
+    }
+    .import-preview {
+      width: 100%;
+      max-height: 320px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+    }
+    .import-preview table { min-width: 560px; }
+    .import-preview td, .import-preview th { padding: 10px 12px; }
+    .import-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      background: #f1f5f9;
+      color: #475569;
+    }
+    .import-badge.ok { background: #dcfce7; color: #166534; }
+    .import-badge.bad { background: #fee2e2; color: #991b1b; }
     @media (max-width: 980px) {
-      .settings, .workspace, .stats { grid-template-columns: 1fr; }
+      .settings, .workspace, .stats, .import-grid { grid-template-columns: 1fr; }
       header { flex-direction: column; }
+      .import-head { flex-direction: column; }
       .side { position: static; }
       .toolbar { flex-direction: column; align-items: stretch; }
       th, td { padding: 10px 12px; }
@@ -400,6 +445,40 @@ function adminHtml() {
       </aside>
     </section>
 
+    <section class="panel import-panel">
+      <div class="import-head">
+        <div>
+          <h2>批量导入</h2>
+          <p class="small">支持 CSV / TSV / JSON / TXT。字段可用：姓名、昵称、name、nickname；头像、avatar；题数、刷题数、solved、score；可选玩家 ID。</p>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="sampleImportButton">填入示例</button>
+          <button class="ghost" id="parseImportButton">预览校验</button>
+          <button class="primary" id="commitImportButton">确认导入</button>
+        </div>
+      </div>
+      <div class="import-grid">
+        <div>
+          <div class="field">
+            <label for="importFile">上传文档</label>
+            <input class="file-input" id="importFile" type="file" accept=".csv,.tsv,.txt,.json,text/csv,text/tab-separated-values,application/json,text/plain">
+          </div>
+          <div class="field">
+            <label for="importText">或粘贴文档内容</label>
+            <textarea class="import-textarea" id="importText" placeholder="姓名,头像,题数&#10;张三,,12&#10;李四,&quot;data:image/png;base64,...&quot;,8"></textarea>
+          </div>
+          <p class="small">头像列留空表示不改头像；填 data:image/png/jpeg/webp;base64,... 会写入头像。没有玩家 ID 时，会优先按昵称匹配已有用户；匹配不到则创建导入用户。</p>
+        </div>
+        <div>
+          <strong>导入预览</strong>
+          <div class="small" id="importSummary">还没有预览。</div>
+          <div class="import-preview" id="importPreview">
+            <div class="empty">上传或粘贴文档后，点击“预览校验”。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="panel backups">
       <div class="actions">
         <button class="ghost" id="backupsButton">查看备份文件</button>
@@ -420,6 +499,7 @@ function adminHtml() {
       selectedId: '',
       pendingAvatarData: '',
       pendingAvatarRemoval: false,
+      importRows: [],
       loadedFromAdmin: false,
       busy: false
     };
@@ -431,6 +511,13 @@ function adminHtml() {
       refreshButton: document.getElementById('refreshButton'),
       backupButton: document.getElementById('backupButton'),
       downloadButton: document.getElementById('downloadButton'),
+      importFile: document.getElementById('importFile'),
+      importText: document.getElementById('importText'),
+      sampleImportButton: document.getElementById('sampleImportButton'),
+      parseImportButton: document.getElementById('parseImportButton'),
+      commitImportButton: document.getElementById('commitImportButton'),
+      importSummary: document.getElementById('importSummary'),
+      importPreview: document.getElementById('importPreview'),
       backupsButton: document.getElementById('backupsButton'),
       resetButton: document.getElementById('resetButton'),
       searchInput: document.getElementById('searchInput'),
@@ -465,6 +552,8 @@ function adminHtml() {
         els.refreshButton,
         els.backupButton,
         els.downloadButton,
+        els.parseImportButton,
+        els.commitImportButton,
         els.backupsButton,
         els.resetButton
       ].forEach(function (button) {
@@ -672,6 +761,269 @@ function adminHtml() {
         state.pendingAvatarRemoval = false;
         setMessage(error.message, 'bad');
         event.target.value = '';
+      }
+    }
+
+    function normalizeHeader(value) {
+      return String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_\-：:（）()]/g, '');
+    }
+
+    function fieldForHeader(value) {
+      const key = normalizeHeader(value);
+      if (['姓名', '昵称', '用户', '用户名', 'name', 'nickname', 'username'].includes(key)) return 'nickname';
+      if (['头像', 'avatar', 'image', 'photo', 'head'].includes(key)) return 'avatar';
+      if (['题数', '刷题数', '完成题数', 'solved', 'score', 'count', 'questions'].includes(key)) return 'solved';
+      if (['id', '玩家id', 'playerid', 'userid', '用户id'].includes(key)) return 'id';
+      return '';
+    }
+
+    function countDelimiter(line, delimiter) {
+      let count = 0;
+      let inQuotes = false;
+      for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        if (char === '"') inQuotes = !inQuotes;
+        else if (char === delimiter && !inQuotes) count += 1;
+      }
+      return count;
+    }
+
+    function detectDelimiter(text) {
+      const firstLine = text.split(/\r?\n/).find(function (line) { return line.trim(); }) || '';
+      const candidates = [',', '\t', ';'];
+      return candidates
+        .map(function (delimiter) {
+          return { delimiter: delimiter, count: countDelimiter(firstLine, delimiter) };
+        })
+        .sort(function (a, b) { return b.count - a.count; })[0].delimiter;
+    }
+
+    function parseDelimitedRows(text, delimiter) {
+      const rows = [];
+      let row = [];
+      let cell = '';
+      let inQuotes = false;
+      for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        const next = text[index + 1];
+        if (char === '"') {
+          if (inQuotes && next === '"') {
+            cell += '"';
+            index += 1;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === delimiter && !inQuotes) {
+          row.push(cell);
+          cell = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+          if (char === '\r' && next === '\n') index += 1;
+          row.push(cell);
+          if (row.some(function (value) { return value.trim(); })) rows.push(row);
+          row = [];
+          cell = '';
+        } else {
+          cell += char;
+        }
+      }
+      row.push(cell);
+      if (row.some(function (value) { return value.trim(); })) rows.push(row);
+      return rows;
+    }
+
+    function pickValue(source, keys) {
+      for (const key of keys) {
+        if (source && source[key] !== undefined) return source[key];
+      }
+      return undefined;
+    }
+
+    function rawRowsFromJson(value) {
+      const source = Array.isArray(value) ? value : value && Array.isArray(value.players) ? value.players : null;
+      if (!source) throw new Error('JSON 需要是数组，或形如 { "players": [...] }。');
+      return source.map(function (item) {
+        return {
+          id: pickValue(item, ['id', 'playerId', '玩家ID', '用户ID']),
+          nickname: pickValue(item, ['nickname', 'name', 'username', '昵称', '姓名', '用户', '用户名']),
+          avatar: pickValue(item, ['avatar', 'image', 'photo', '头像']),
+          solved: pickValue(item, ['solved', 'score', 'count', '题数', '刷题数', '完成题数']),
+        };
+      });
+    }
+
+    function rawRowsFromDelimited(text) {
+      const rows = parseDelimitedRows(text, detectDelimiter(text));
+      if (!rows.length) return [];
+      const fields = rows[0].map(fieldForHeader);
+      const hasHeader = fields.includes('nickname') && fields.includes('solved');
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      return dataRows.map(function (columns) {
+        if (!hasHeader) {
+          return {
+            nickname: columns[0],
+            avatar: columns[1],
+            solved: columns[2],
+            id: columns[3],
+          };
+        }
+        const raw = {};
+        fields.forEach(function (field, index) {
+          if (field) raw[field] = columns[index];
+        });
+        return raw;
+      });
+    }
+
+    function parseImportSource(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        return rawRowsFromJson(JSON.parse(trimmed));
+      }
+      return rawRowsFromDelimited(trimmed);
+    }
+
+    function existingPlayerForImport(row) {
+      const players = state.document && Array.isArray(state.document.players) ? state.document.players : [];
+      if (row.id) {
+        const byId = players.find(function (player) { return player.id === row.id; });
+        if (byId) return byId;
+      }
+      return players.find(function (player) { return player.nickname === row.nickname; }) || null;
+    }
+
+    function normalizeImportRow(raw, index) {
+      const errors = [];
+      const nickname = raw.nickname == null ? '' : String(raw.nickname).trim();
+      const id = raw.id == null ? '' : String(raw.id).trim();
+      const avatar = raw.avatar == null ? '' : String(raw.avatar).trim();
+      const solvedNumber = Number.parseInt(raw.solved == null ? '' : String(raw.solved).trim(), 10);
+
+      if (!nickname) errors.push('缺少姓名/昵称');
+      if (nickname.length > 30) errors.push('昵称超过 30 字');
+      if (id && (id.length < 8 || id.length > 80)) errors.push('玩家 ID 长度需为 8-80');
+      if (!Number.isSafeInteger(solvedNumber) || solvedNumber < 0) errors.push('题数必须是非负整数');
+      if (solvedNumber > 10000000) errors.push('题数过大');
+      if (avatar && !avatar.startsWith('data:image/')) errors.push('头像需为 data:image/...;base64,...');
+      if (avatar && avatar.length > MAX_AVATAR_DATA_URL_LENGTH) errors.push('头像超过后端大小限制');
+
+      const row = {
+        rowNumber: index + 1,
+        ...(id ? { id: id } : {}),
+        nickname: nickname,
+        solved: Number.isSafeInteger(solvedNumber) ? solvedNumber : 0,
+        ...(avatar ? { avatar: avatar } : {}),
+        errors: errors,
+      };
+      const existing = existingPlayerForImport(row);
+      row.action = errors.length ? '错误' : existing ? '更新' : '新增';
+      return row;
+    }
+
+    function validImportRows() {
+      return state.importRows.filter(function (row) { return row.errors.length === 0; });
+    }
+
+    function renderImportPreview() {
+      const rows = state.importRows;
+      if (!rows.length) {
+        els.importSummary.textContent = '还没有预览。';
+        els.importPreview.innerHTML = '<div class="empty">上传或粘贴文档后，点击“预览校验”。</div>';
+        return;
+      }
+      const validCount = validImportRows().length;
+      const errorCount = rows.length - validCount;
+      els.importSummary.textContent = '共 ' + rows.length + ' 行；可导入 ' + validCount + ' 行；错误 ' + errorCount + ' 行。';
+      els.importPreview.innerHTML =
+        '<table><thead><tr><th>状态</th><th>姓名/昵称</th><th>题数</th><th>头像</th><th>说明</th></tr></thead><tbody>' +
+        rows.map(function (row) {
+          const ok = row.errors.length === 0;
+          return '<tr>' +
+            '<td><span class="import-badge ' + (ok ? 'ok' : 'bad') + '">' + escapeHtml(row.action) + '</span></td>' +
+            '<td>' + escapeHtml(row.nickname || '-') + '</td>' +
+            '<td>' + escapeHtml(row.solved) + '</td>' +
+            '<td>' + (row.avatar ? '有头像' : '不改头像') + '</td>' +
+            '<td>' + escapeHtml(ok ? (row.id ? '按 ID 导入' : '按昵称匹配/创建') : row.errors.join('；')) + '</td>' +
+          '</tr>';
+        }).join('') +
+        '</tbody></table>';
+    }
+
+    function parseImportDocument() {
+      try {
+        const rawRows = parseImportSource(els.importText.value);
+        state.importRows = rawRows.map(normalizeImportRow);
+        renderImportPreview();
+        const validCount = validImportRows().length;
+        setMessage(validCount ? '预览完成：' + validCount + ' 行可以导入。' : '没有可导入的有效行。', validCount ? 'ok' : 'bad');
+      } catch (error) {
+        state.importRows = [];
+        renderImportPreview();
+        setMessage('文档解析失败：' + error.message, 'bad');
+      }
+    }
+
+    async function loadImportFile(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      try {
+        els.importText.value = await file.text();
+        parseImportDocument();
+      } catch (error) {
+        setMessage('读取文档失败：' + error.message, 'bad');
+      }
+    }
+
+    function fillImportSample() {
+      els.importText.value = [
+        '姓名,头像,题数',
+        '张三,,12',
+        '李四,,8',
+        '王五,"data:image/png;base64,iVBORw0KGgo=",3',
+      ].join('\n');
+      parseImportDocument();
+    }
+
+    async function commitImportRows() {
+      const rows = validImportRows();
+      if (!rows.length) {
+        setMessage('没有可导入的有效行，先点“预览校验”。', 'bad');
+        return;
+      }
+      if (!confirm('确认导入 ' + rows.length + ' 条排行榜记录？后端会先自动备份。')) return;
+      setBusy(true);
+      setMessage('正在批量导入……');
+      try {
+        const result = await proxy('/api/admin/import', {
+          method: 'POST',
+          admin: true,
+          body: {
+            players: rows.map(function (row) {
+              return {
+                ...(row.id ? { id: row.id } : {}),
+                nickname: row.nickname,
+                solved: row.solved,
+                ...(row.avatar ? { avatar: row.avatar } : {}),
+              };
+            }),
+          },
+        });
+        state.document = result.document;
+        state.loadedFromAdmin = true;
+        state.importRows = [];
+        renderImportPreview();
+        render();
+        setMessage(
+          '批量导入完成：新增 ' + result.imported.created + ' 条，更新 ' + result.imported.updated + ' 条。',
+          'ok',
+        );
+      } catch (error) {
+        setMessage(error.message, 'bad');
+      } finally {
+        setBusy(false);
       }
     }
 
@@ -908,6 +1260,10 @@ function adminHtml() {
       els.refreshButton.addEventListener('click', refreshAll);
       els.backupButton.addEventListener('click', createBackup);
       els.downloadButton.addEventListener('click', downloadJson);
+      els.importFile.addEventListener('change', loadImportFile);
+      els.sampleImportButton.addEventListener('click', fillImportSample);
+      els.parseImportButton.addEventListener('click', parseImportDocument);
+      els.commitImportButton.addEventListener('click', commitImportRows);
       els.backupsButton.addEventListener('click', listBackups);
       els.resetButton.addEventListener('click', resetLeaderboard);
       els.searchInput.addEventListener('input', renderPlayers);

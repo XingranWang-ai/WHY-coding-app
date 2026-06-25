@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { after, before, test } from 'node:test'
-import { createHandler, mergePlayer, needsPlayerUpdate } from './index.mjs'
+import { createHandler, mergeImportedPlayers, mergePlayer, needsPlayerUpdate } from './index.mjs'
 
 class MemoryStore {
   constructor() {
@@ -60,6 +60,13 @@ class MemoryStore {
       updatedAt: now(),
     }
     return this.document
+  }
+
+  async importPlayers(players, now) {
+    await this.backup('before-import', now)
+    const next = mergeImportedPlayers(this.document, players, now())
+    this.document = next.document
+    return next
   }
 
   async reset(now) {
@@ -188,12 +195,37 @@ test('admin endpoints require a token and can operate on the leaderboard', async
   assert.equal(backups.status, 200)
   assert.ok((await backups.json()).backups.length >= 1)
 
+  const imported = await fetch(`${baseUrl}/api/admin/import`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      players: [
+        { nickname: 'Grace', solved: 12 },
+        {
+          nickname: 'Linus',
+          solved: 5,
+          avatar: 'data:image/png;base64,iVBORw0KGgo=',
+        },
+      ],
+    }),
+  })
+  assert.equal(imported.status, 200)
+  const importedBody = await imported.json()
+  assert.equal(importedBody.imported.total, 2)
+  assert.equal(importedBody.imported.created, 1)
+  assert.equal(importedBody.imported.updated, 1)
+  assert.equal(importedBody.document.players.find((player) => player.nickname === 'Grace').solved, 12)
+  assert.equal(
+    importedBody.document.players.find((player) => player.nickname === 'Linus').avatar,
+    'data:image/png;base64,iVBORw0KGgo=',
+  )
+
   const deleted = await fetch(`${baseUrl}/api/admin/players/player-12345678`, {
     method: 'DELETE',
     headers,
   })
   assert.equal(deleted.status, 200)
-  assert.equal((await deleted.json()).players.length, 0)
+  assert.equal((await deleted.json()).players.length, 1)
 
   const reset = await fetch(`${baseUrl}/api/admin/reset`, { method: 'POST', headers })
   assert.equal(reset.status, 200)
