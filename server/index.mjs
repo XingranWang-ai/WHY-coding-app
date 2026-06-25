@@ -305,14 +305,6 @@ export class GitHubGistStore {
     }
   }
 
-  documentFromUpdatedGist(gist) {
-    const content = gist.files?.[FILE_NAME]?.content
-    if (typeof content !== 'string') {
-      throw new Error('GitHub did not return the leaderboard file')
-    }
-    return normalizeDocument(JSON.parse(content))
-  }
-
   async patchFiles(files) {
     const response = await fetchWithRetry(
       `https://api.github.com/gists/${this.gistId}`,
@@ -323,7 +315,7 @@ export class GitHubGistStore {
       },
     )
     if (!response.ok) throw new Error(`Unable to update leaderboard store: ${response.status}`)
-    return response.json()
+    return response
   }
 
   async withWriteLock(operation) {
@@ -363,15 +355,13 @@ export class GitHubGistStore {
       const current = await this.read()
       if (!needsPlayerUpdate(current, payload)) return current
       const next = mergePlayer(current, payload, now())
-      const updatedGist = await this.patchFiles({
+      await this.patchFiles({
         [FILE_NAME]: { content: JSON.stringify(next) },
       })
-      const persisted = this.documentFromUpdatedGist(updatedGist)
-      const savedPlayer = persisted.players.find(
-        (player) => player.id === payload.profile.id,
-      )
+      const persisted = normalizeDocument(next)
+      const savedPlayer = persisted.players.find((player) => player.id === payload.profile.id)
       if (!savedPlayer || savedPlayer.solved < payload.solved) {
-        throw new Error('GitHub returned stale leaderboard data after update')
+        throw new Error('Leaderboard update did not include the submitted player')
       }
       this.cache = { document: persisted, savedAt: Date.now() }
       return persisted
@@ -406,11 +396,11 @@ export class GitHubGistStore {
       if (nextPlayers.length === current.players.length) return current
       const nowString = now()
       const next = { version: 1, players: nextPlayers, updatedAt: nowString }
-      const updatedGist = await this.patchFiles({
+      await this.patchFiles({
         [backupFileName('before-delete', nowString)]: { content: JSON.stringify(current) },
         [FILE_NAME]: { content: JSON.stringify(next) },
       })
-      const persisted = this.documentFromUpdatedGist(updatedGist)
+      const persisted = normalizeDocument(next)
       this.cache = { document: persisted, savedAt: Date.now() }
       return persisted
     })
@@ -436,11 +426,11 @@ export class GitHubGistStore {
       const players = [...current.players]
       players[playerIndex] = nextPlayer
       const next = { version: 1, players, updatedAt: nowString }
-      const updatedGist = await this.patchFiles({
+      await this.patchFiles({
         [backupFileName('before-edit', nowString)]: { content: JSON.stringify(current) },
         [FILE_NAME]: { content: JSON.stringify(next) },
       })
-      const persisted = this.documentFromUpdatedGist(updatedGist)
+      const persisted = normalizeDocument(next)
       this.cache = { document: persisted, savedAt: Date.now() }
       return persisted
     })
@@ -451,11 +441,11 @@ export class GitHubGistStore {
       const current = await this.read({ fresh: true })
       const nowString = now()
       const next = mergeImportedPlayers(current, importPlayers, nowString)
-      const updatedGist = await this.patchFiles({
+      await this.patchFiles({
         [backupFileName('before-import', nowString)]: { content: JSON.stringify(current) },
         [FILE_NAME]: { content: JSON.stringify(next.document) },
       })
-      const persisted = this.documentFromUpdatedGist(updatedGist)
+      const persisted = normalizeDocument(next.document)
       this.cache = { document: persisted, savedAt: Date.now() }
       return { document: persisted, imported: next.imported }
     })
@@ -466,11 +456,11 @@ export class GitHubGistStore {
       const current = await this.read()
       const nowString = now()
       const next = emptyDocument(nowString)
-      const updatedGist = await this.patchFiles({
+      await this.patchFiles({
         [backupFileName('before-reset', nowString)]: { content: JSON.stringify(current) },
         [FILE_NAME]: { content: JSON.stringify(next) },
       })
-      const persisted = this.documentFromUpdatedGist(updatedGist)
+      const persisted = normalizeDocument(next)
       this.cache = { document: persisted, savedAt: Date.now() }
       return persisted
     })
