@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 const FILE_NAME = 'leaderboard.json'
 const BACKUP_PREFIX = 'leaderboard-backup-'
-const MAX_PLAYERS = 100
+const MAX_PLAYERS = 200
 const MAX_AVATAR_LENGTH = 9_000
 const MAX_BODY_BYTES = 32_000
 const MAX_IMPORT_BODY_BYTES = 1_200_000
@@ -612,6 +612,7 @@ export function createHandler({
           versionCode: versionInfo.versionCode,
           uptimeSeconds: Math.floor(process.uptime()),
           adminEnabled: Boolean(adminToken),
+          maxPlayers: MAX_PLAYERS,
           endpoints: [
             'GET /health',
             'GET /ready',
