@@ -72,6 +72,7 @@ type ThemeSettings = {
 }
 
 const READ_SECONDS = 5
+const LEADERBOARD_DISPLAY_LIMIT = 12
 const SETTINGS_KEY = 'why-app-settings-v2'
 const DEFAULT_SETTINGS: ThemeSettings = {
   background: '#f4efe5',
@@ -648,7 +649,8 @@ function LeaderboardPage({
           ? '离线缓存'
           : '待同步'
 
-  const topThree = [entries[1], entries[0], entries[2]]
+  const visibleEntries = entries.slice(0, LEADERBOARD_DISPLAY_LIMIT)
+  const topThree = [visibleEntries[1], visibleEntries[0], visibleEntries[2]]
   const topRanks = [2, 1, 3]
 
   return (
@@ -706,12 +708,15 @@ function LeaderboardPage({
 
       <section className="rank-list-section">
         <div className="rank-list-title">
-          <span>全部排名</span>
-          <small>{entries.length} 人</small>
+          <span>前 {LEADERBOARD_DISPLAY_LIMIT} 名</span>
+          <small>
+            {visibleEntries.length}
+            {entries.length > LEADERBOARD_DISPLAY_LIMIT ? ` / 共 ${entries.length} 人` : ' 人'}
+          </small>
         </div>
-        {entries.length > 3 ? (
+        {visibleEntries.length > 3 ? (
           <ol className="leaderboard-list">
-            {entries.slice(3, 50).map((entry, index) => (
+            {visibleEntries.slice(3).map((entry, index) => (
               <li
                 className={entry.id === profile?.id ? 'current' : ''}
                 key={entry.id}
